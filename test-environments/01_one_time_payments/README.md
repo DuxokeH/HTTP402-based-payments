@@ -1,4 +1,4 @@
-# 01 — A single micropayment for service access
+# 01 — A one-time micropayment for service access
 
 The server is the **provider** of a protected service (a demo response or an external API). For
 **one** use of the service the user makes **one** on-chain transaction on the Ethereum Sepolia
@@ -280,7 +280,7 @@ python3 latency_analysis.py ../measurements/one_time_real.csv --out figures
 The `--sample` flag stamps a "SIMULATED EXAMPLE" watermark on the figures (for figures built from
 synthetic data). The default output directory is `analysis/figures/`.
 
-The script processes **only** the CSVs of this project's own protocol. `x402_enkratna_*.csv` files
+The script processes **only** the CSVs of this project's own protocol. `x402_one_time_*.csv` files
 are analysed by `../comparison/comparison_x402.py`.
 
 ## Expected outputs
@@ -289,9 +289,9 @@ Every measurement file is created in `01_one_time_payments/measurements/`:
 
 | File | Created by |
 |---|---|
-| `one_time_mock.csv` + `one_time_mock_povzetek.json` | `npm run mock` / `npm start` (client) |
-| `one_time_real.csv` + `one_time_real_povzetek.json` | `npm run real` |
-| `x402_enkratna_mock.csv` + `x402_enkratna_mock_povzetek.json` | `--x402` |
+| `one_time_mock.csv` + `one_time_mock_summary.json` | `npm run mock` / `npm start` (client) |
+| `one_time_real.csv` + `one_time_real_summary.json` | `npm run real` |
+| `x402_one_time_mock.csv` + `x402_one_time_mock_summary.json` | `--x402` |
 | `security_tests_mock.csv` / `security_tests_real.csv` | `--security` |
 | `security_tests_x402_mock.csv` | `--x402 --security` |
 
@@ -368,9 +368,9 @@ Output: `measurements/security_tests_x402_mock.csv`.
 Alongside this project's own flow (A1, native ETH), the folder supports the **official x402 v2
 protocol** (A2) as a parallel mode: `GET /x402/service` in a **self-facilitated** topology — the
 server verifies **and** settles the payment itself, while the client only signs an **EIP-3009**
-authorisation. Instead of a separate exchange for the proof token, the payment travels in the
+authorization. Instead of a separate exchange for the proof token, the payment travels in the
 x402 v2 protocol headers: the server describes the challenge in the `PAYMENT-REQUIRED` header of
-the 402 response, the client sends the signed authorisation in `PAYMENT-SIGNATURE`, and the server
+the 402 response, the client sends the signed authorization in `PAYMENT-SIGNATURE`, and the server
 returns the settlement outcome in `PAYMENT-RESPONSE`. The flow therefore takes **2 exchanges /
 4 messages** (the `X-Payment` header from this project's own flow is not used here).
 
@@ -378,7 +378,7 @@ returns the settlement outcome in `PAYMENT-RESPONSE`. The flow therefore takes *
 # server (mock — no funds):
 cd server && X402_MODE=self X402_MOCK=true npm run mock
 # client:
-cd client && node measurement_client.js --x402 --runs 30     # → measurements/x402_enkratna_mock.csv
+cd client && node measurement_client.js --x402 --runs 30     # → measurements/x402_one_time_mock.csv
 ```
 
 With `X402_MODE=self` the routes `GET /x402/config`, `GET /x402/service` and
@@ -392,7 +392,7 @@ With `X402_MODE=self` the routes `GET /x402/config`, `GET /x402/service` and
 > real run requires a token with EIP-3009 support (the `X402_USDC_ADDRESS` and `X402_ASSET_*`
 > settings) and a funded settlement wallet.
 
-In the browser the page carries an "x402 v2" card (MetaMask signs the authorisation; it uses the
+In the browser the page carries an "x402 v2" card (MetaMask signs the authorization; it uses the
 `public/x402-browser.js` bundle). For a detailed explanation of the protocol and of every `X402_*`
 variable, see `../README.md`.
 

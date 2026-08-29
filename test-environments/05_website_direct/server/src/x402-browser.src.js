@@ -62,7 +62,7 @@ async function payFlow({ url, client, method = 'GET', body = null, paymentId = n
   let payload;
   try { payload = await client.createPaymentPayload(pr); }
   finally { client.__pid = null; }
-  t.tPodpis = performance.now() - t0;
+  t.tSign = performance.now() - t0;
 
   const paid = { ...init, headers: { ...init.headers, ...httpClient.encodePaymentSignatureHeader(payload), 'Access-Control-Expose-Headers': 'PAYMENT-RESPONSE,X-PAYMENT-RESPONSE' } };
   t0 = performance.now();

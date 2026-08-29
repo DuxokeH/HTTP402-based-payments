@@ -24,10 +24,10 @@ rng = np.random.default_rng(SEED)
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)  # test-environments/
 
-def out(mapa, ime):
-    d = os.path.join(ROOT, mapa, "measurements", "_sample")
+def out(folder, name):
+    d = os.path.join(ROOT, folder, "measurements", "_sample")
     os.makedirs(d, exist_ok=True)
-    return os.path.join(d, ime)
+    return os.path.join(d, name)
 
 def iso(i):
     return (datetime.datetime(2026, 8, 13, 12, 0, 0) + datetime.timedelta(seconds=15 * i)).isoformat()
@@ -47,16 +47,16 @@ def one_time():
     with open(p, "w", newline="") as f:
         w = csv.writer(f); w.writerow(h)
         for i in range(1, 9):
-            izziv = clip(rng.normal(9, 3), 1.5)
-            oddaja = clip(rng.normal(90, 30), 20)
-            potrd = clip(rng.normal(9000, 3500), 2500)     # Sepolia ~1 conf
-            prev = clip(rng.normal(340, 120), 120)         # 2 RPC reads
-            dost = clip(rng.normal(12, 5), 2)
-            skup = izziv + oddaja + potrd + prev + dost
+            challenge = clip(rng.normal(9, 3), 1.5)
+            submit = clip(rng.normal(90, 30), 20)
+            confirm = clip(rng.normal(9000, 3500), 2500)   # Sepolia ~1 conf
+            verify = clip(rng.normal(340, 120), 120)       # 2 RPC reads
+            access = clip(rng.normal(12, 5), 2)
+            total = challenge + submit + confirm + verify + access
             gwei = clip(rng.normal(2.0, 1.1), 0.15)
             fee_wei = int(21000 * gwei * GWEI)
-            w.writerow([i, iso(i), "real", f"{izziv:.3f}", f"{oddaja:.3f}", f"{potrd:.3f}", f"{prev:.3f}",
-                        f"{dost:.3f}", f"{skup:.3f}", f"{clip(rng.normal(180,60),40):.3f}",
+            w.writerow([i, iso(i), "real", f"{challenge:.3f}", f"{submit:.3f}", f"{confirm:.3f}", f"{verify:.3f}",
+                        f"{access:.3f}", f"{total:.3f}", f"{clip(rng.normal(180,60),40):.3f}",
                         f"{clip(rng.normal(150,60),30):.3f}", f"{clip(rng.normal(3,1),0.5):.3f}", "0.000",
                         21000, int(gwei*GWEI), fee_wei, f"{fee_wei/1e18:.18f}", 6800000+i, "0x"+"ab"*32, 200])
     print(f"  ✓ {p}")
@@ -66,13 +66,13 @@ def one_time():
     with open(p, "w", newline="") as f:
         w = csv.writer(f); w.writerow(h)
         for i in range(1, 61):
-            izziv = clip(rng.normal(3.0, 1.0), 0.8)
-            oddaja = clip(rng.normal(1.4, 0.5), 0.4)   # local signing
-            prev = clip(rng.normal(1.6, 0.6), 0.5)     # mock verify (no RPC)
-            dost = clip(rng.normal(1.3, 0.5), 0.4)
-            skup = izziv + oddaja + 0 + prev + dost
-            w.writerow([i, iso(i), "mock", f"{izziv:.3f}", f"{oddaja:.3f}", "0.000", f"{prev:.3f}",
-                        f"{dost:.3f}", f"{skup:.3f}", f"{clip(rng.normal(0.8,0.3),0.2):.3f}", "",
+            challenge = clip(rng.normal(3.0, 1.0), 0.8)
+            submit = clip(rng.normal(1.4, 0.5), 0.4)     # local signing
+            verify = clip(rng.normal(1.6, 0.6), 0.5)     # mock verify (no RPC)
+            access = clip(rng.normal(1.3, 0.5), 0.4)
+            total = challenge + submit + 0 + verify + access
+            w.writerow([i, iso(i), "mock", f"{challenge:.3f}", f"{submit:.3f}", "0.000", f"{verify:.3f}",
+                        f"{access:.3f}", f"{total:.3f}", f"{clip(rng.normal(0.8,0.3),0.2):.3f}", "",
                         f"{clip(rng.normal(0.5,0.2),0.1):.3f}", "0.000", "", "", "", "", 0, "0x"+"cd"*32, 200])
     print(f"  ✓ {p}")
 
@@ -86,13 +86,13 @@ def transactions():
     with open(p, "w", newline="") as f:
         w = csv.writer(f); w.writerow(h)
         for i in range(1, 21):
-            izziv = clip(rng.normal(9, 3), 1.5); oddaja = clip(rng.normal(90, 30), 20)
-            potrd = clip(rng.normal(9000, 3500), 2500); prev = clip(rng.normal(330, 120), 120)
-            odc = clip(rng.normal(11, 4), 2); skup = izziv+oddaja+potrd+prev+odc
+            challenge = clip(rng.normal(9, 3), 1.5); submit = clip(rng.normal(90, 30), 20)
+            confirm = clip(rng.normal(9000, 3500), 2500); verify = clip(rng.normal(330, 120), 120)
+            reading = clip(rng.normal(11, 4), 2); total = challenge+submit+confirm+verify+reading
             gwei = clip(rng.normal(2.0, 1.1), 0.15); fee_wei = int(21000*gwei*GWEI); cum += fee_wei/1e18
             temp = min(30, max(15, temp + rng.normal(0, 0.2))); hum = min(70, max(30, hum + rng.normal(0, 0.6)))
-            w.writerow([i, iso(i), "real", f"{izziv:.3f}", f"{oddaja:.3f}", f"{potrd:.3f}", f"{prev:.3f}",
-                        f"{odc:.3f}", f"{skup:.3f}", 21000, int(gwei*GWEI), fee_wei, f"{fee_wei/1e18:.18f}",
+            w.writerow([i, iso(i), "real", f"{challenge:.3f}", f"{submit:.3f}", f"{confirm:.3f}", f"{verify:.3f}",
+                        f"{reading:.3f}", f"{total:.3f}", 21000, int(gwei*GWEI), fee_wei, f"{fee_wei/1e18:.18f}",
                         4000000, f"{cum:.18f}", round(temp,2), round(hum,1), 6800000+i, "0x"+f"{i:02d}"*16])
     print(f"  ✓ {p}  (cumulative fee ≈ {cum:.6f} ETH for 20 tx)")
 
@@ -112,11 +112,11 @@ def credit():
                     f"{clip(rng.normal(4,1),1):.3f}", f"{clip(rng.normal(9300,3000),2600):.3f}",
                     "", str(deposit), str(budget), 21000, f"{topup_fee:.18f}", "", "", "", sess])
         for i in range(1, 21):
-            podpis = clip(rng.normal(0.5, 0.2), 0.15); zaht = clip(rng.normal(4.0, 1.8), 1.2)
+            sign = clip(rng.normal(0.5, 0.2), 0.15); request = clip(rng.normal(4.0, 1.8), 1.2)
             bal -= price; budget_left = bal
             temp = min(30, max(15, temp + rng.normal(0, 0.2))); hum = min(70, max(30, hum + rng.normal(0, 0.6)))
-            w.writerow([f"debit_{i}", iso(i), "real", "debit", f"{podpis:.3f}", f"{zaht:.3f}",
-                        f"{clip(rng.normal(1.2,0.4),0.4):.3f}", f"{podpis+zaht:.3f}", price, bal, budget_left,
+            w.writerow([f"debit_{i}", iso(i), "real", "debit", f"{sign:.3f}", f"{request:.3f}",
+                        f"{clip(rng.normal(1.2,0.4),0.4):.3f}", f"{sign+request:.3f}", price, bal, budget_left,
                         "", "", round(temp,2), round(hum,1), f"{1786000000000+i}-abcd", sess])
     print(f"  ✓ {p}  (1 top-up + 20 debits; final credit {bal} wei)")
 

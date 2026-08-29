@@ -13,8 +13,8 @@
  * (`POST /submit-payment`) and not to the merchant (`POST /tx/verify`, which
  * does not exist in this branch). It therefore has two addresses:
  *
- *    baseURL      merchant    — 402 challenge and access to the resource
- *    posrednikURL facilitator — payment reporting, proof-token issuance
+ *    baseURL        merchant    — 402 challenge and access to the resource
+ *    facilitatorUrl facilitator — payment reporting, proof-token issuance
  *
  * Requests to the facilitator do NOT carry the merchant's admin token:
  * `/submit-payment` is a public facilitator route, and the facilitator does not
@@ -60,7 +60,7 @@ function makeWallet(mock, payerPk, rpcUrl) {
 function makeClients(opts) {
   return {
     merchant: axios.create({ baseURL: opts.baseURL, timeout: 90_000, validateStatus: () => true, headers: agentHeaders(opts.adminToken) }),
-    facilitator: axios.create({ baseURL: opts.posrednikURL, timeout: 90_000, validateStatus: () => true, headers: { 'X-Demo-Agent': 'runner' } })
+    facilitator: axios.create({ baseURL: opts.facilitatorUrl, timeout: 90_000, validateStatus: () => true, headers: { 'X-Demo-Agent': 'runner' } })
   };
 }
 
@@ -70,7 +70,7 @@ async function runTx(opts) {
   const CONF = Math.max(1, parseInt(opts.confirmations || 1, 10));
   const { merchant, facilitator } = makeClients(opts);
   const { wallet } = makeWallet(mock, payerPk, rpcUrl);
-  emit('start', { mode: mock ? 'mock' : 'real', topology: 'facilitator', queries: queries, payer: wallet.address, priceWei: priceWei, facilitator: opts.posrednikURL });
+  emit('start', { mode: mock ? 'mock' : 'real', topology: 'facilitator', queries: queries, payer: wallet.address, priceWei: priceWei, facilitator: opts.facilitatorUrl });
 
   let cumFee = 0, ok = 0;
   for (let i = 1; i <= queries; i++) {
@@ -80,8 +80,8 @@ async function runTx(opts) {
     const ch = await merchant.get('/tx/reading', { headers: { 'X-Payer': wallet.address } });
     if (ch.status !== 402) { emit('error', { i, message: `expected 402, got ${ch.status}` }); continue; }
     const pay = ch.data.payment;
-    const tIzziv = performance.now() - T0;
-    const dIzziv = downMs(ch);
+    const tChallenge = performance.now() - T0;
+    const dChallenge = downMs(ch);
 
     // 2) on-chain payment (C→B) — one payment per reading
     let txHash, gasUsed = null, feeEth = null, tConfirm = 0;
@@ -101,20 +101,20 @@ async function runTx(opts) {
     // 3) report the payment to the FACILITATOR (C→F) — this is where the proof token is created
     let s = performance.now();
     const sp = await facilitator.post('/submit-payment', { requestId: pay.requestId, txHash, network, payerAddress: wallet.address });
-    const tPrijava = performance.now() - s;
+    const tReport = performance.now() - s;
     if (sp.status !== 200) { emit('error', { i, message: `submit-payment ${sp.status}: ${JSON.stringify(sp.data)}` }); continue; }
     const proofToken = sp.data.proofToken || (sp.data.proof && sp.data.proof.token);
 
     // 4) access at the merchant with the proof (C→M; the merchant redeems it at the facilitator, M→F)
     s = performance.now();
     const rd = await merchant.get('/tx/reading', { headers: { 'X-Payment': proofToken } });
-    const tDostop = performance.now() - s;
+    const tAccess = performance.now() - s;
     if (rd.status !== 200) { emit('error', { i, message: `reading ${rd.status}` }); continue; }
     ok++;
     emit('query', {
       i, reading: rd.data.reading, tTotalMs: +(performance.now() - T0).toFixed(1),
-      tChallengeMs: +tIzziv.toFixed(1), tReportMs: +tPrijava.toFixed(1), tAccessMs: +tDostop.toFixed(1),
-      tFacilitatorMs: [dIzziv, downMs(rd)].filter(v => v !== null).reduce((a, b) => a + b, 0) || null,
+      tChallengeMs: +tChallenge.toFixed(1), tReportMs: +tReport.toFixed(1), tAccessMs: +tAccess.toFixed(1),
+      tFacilitatorMs: [dChallenge, downMs(rd)].filter(v => v !== null).reduce((a, b) => a + b, 0) || null,
       tConfirmMs: +tConfirm.toFixed(1), gasUsed, feeEth, cumFeeEth: +cumFee.toFixed(8),
       onChainTx: mock ? i : ok
     });
@@ -130,7 +130,7 @@ async function runMetered(opts) {
   const { wallet } = makeWallet(mock, payerPk, rpcUrl);
   const cfg = (await merchant.get('/config')).data.metered;
   const maxWei = (BigInt(cfg.priceWeiPerCall) + BigInt(cfg.priceWeiPerByte) * 4096n).toString();
-  emit('start', { mode: mock ? 'mock' : 'real', topology: 'facilitator', debits: debits, payer: wallet.address, priceWei: cfg.priceWeiPerCall, facilitator: opts.posrednikURL });
+  emit('start', { mode: mock ? 'mock' : 'real', topology: 'facilitator', debits: debits, payer: wallet.address, priceWei: cfg.priceWeiPerCall, facilitator: opts.facilitatorUrl });
 
   // Top-up (one on-chain transaction) → session. The client interface is the same as in
   // the direct branch: the session is opened AT THE MERCHANT, which opens it at the facilitator.
@@ -151,27 +151,27 @@ async function runMetered(opts) {
   emit('session', { sessionId: session.sessionId, depositWei: session.depositWei, budgetWei: session.budgetWei, expiresAt: session.expiresAt, gasUsed, feeEth, tFacilitatorMs: downMs(op) });
 
   // N signed debits (no chain) — each one passes through the facilitator at the merchant
-  const tPod = [], tZah = [], tPos = []; let ok = 0;
+  const tSignAll = [], tRequestAll = [], tFacilitatorAll = []; let ok = 0;
   for (let i = 1; i <= debits; i++) {
     if (!isAlive()) return;
     const nonce = mkNonce();
     let s = performance.now();
     const sig = await wallet.signMessage(debitMessage(wallet.address, session.sessionId, nonce, resource, maxWei));
-    const tPodpis = performance.now() - s;
+    const tSign = performance.now() - s;
     s = performance.now();
     const r = await merchant.get('/metered/reading-metered', { headers: { 'X-Payer': wallet.address, 'X-Session': session.sessionId, 'X-Nonce': nonce, 'X-Signature': sig, 'X-Max-Wei': maxWei } });
-    const tZahteva = performance.now() - s;
+    const tRequest = performance.now() - s;
     if (r.status !== 200) { emit('error', { i, message: `${r.status}: ${JSON.stringify(r.data)}` }); continue; }
-    const tPosrednik = downMs(r);
-    ok++; tPod.push(tPodpis); tZah.push(tZahteva); if (tPosrednik !== null) tPos.push(tPosrednik);
+    const tFacilitator = downMs(r);
+    ok++; tSignAll.push(tSign); tRequestAll.push(tRequest); if (tFacilitator !== null) tFacilitatorAll.push(tFacilitator);
     emit('debit', {
-      i, reading: r.data.reading, tSignMs: +tPodpis.toFixed(2), tRequestMs: +tZahteva.toFixed(2), tFacilitatorMs: tPosrednik,
+      i, reading: r.data.reading, tSignMs: +tSign.toFixed(2), tRequestMs: +tRequest.toFixed(2), tFacilitatorMs: tFacilitator,
       priceWei: r.headers['x-charged-wei'], creditWei: r.headers['x-balance-wei'], budgetRemainingWei: r.headers['x-budget-remaining-wei']
     });
   }
   const med = (a) => { a = a.slice().sort((x, y) => x - y); return a.length ? +a[Math.floor(a.length / 2)].toFixed(2) : null; };
   const fin = (await merchant.get(`/metered/session/${session.sessionId}`)).data.session;
-  emit('summary', { mode: mock ? 'mock' : 'real', topology: 'facilitator', succeeded: ok, onChainTransactions: 1, medSignMs: med(tPod), medRequestMs: med(tZah), medFacilitatorMs: med(tPos), finalCreditWei: fin.balanceWei, spentWei: fin.spentWei });
+  emit('summary', { mode: mock ? 'mock' : 'real', topology: 'facilitator', succeeded: ok, onChainTransactions: 1, medSignMs: med(tSignAll), medRequestMs: med(tRequestAll), medFacilitatorMs: med(tFacilitatorAll), finalCreditWei: fin.balanceWei, spentWei: fin.spentWei });
 }
 
 module.exports = { runTx, runMetered };

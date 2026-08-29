@@ -77,7 +77,7 @@ async function pay() {
     const chal = await fetch(`/service?payer=${account}`, { headers: { 'X-Payer': account } });
     if (chal.status !== 402) throw new Error(`Expected 402, got ${chal.status}`);
     const { payment } = await chal.json();
-    T.izziv = now() - s; $('t-izziv').textContent = ms(T.izziv);
+    T.challenge = now() - s; $('t-challenge').textContent = ms(T.challenge);
     setStep('step-request', 'done');
 
     // 2 — send tx + wait
@@ -85,7 +85,7 @@ async function pay() {
     s = now();
     const hash = await walletClient.sendTransaction({ account, to: getAddress(payment.to), value: parseEther(payment.amount) });
     await publicClient.waitForTransactionReceipt({ hash });
-    T.potrditev = now() - s; $('t-potrditev').textContent = ms(T.potrditev);
+    T.confirm = now() - s; $('t-confirm').textContent = ms(T.confirm);
     setStep('step-pay', 'done');
 
     // 3 — verify
@@ -97,7 +97,7 @@ async function pay() {
     });
     const verifyJson = await verifyRes.json();
     if (!verifyRes.ok) { setStep('step-verify', 'fail'); throw new Error(verifyJson.message || verifyJson.error || 'Verification failed'); }
-    T.preverjanje = now() - s; $('t-preverjanje').textContent = ms(T.preverjanje);
+    T.verify = now() - s; $('t-verify').textContent = ms(T.verify);
     const proofToken = verifyJson.proofToken;
     setStep('step-verify', 'done');
 
@@ -110,10 +110,10 @@ async function pay() {
     });
     const aiJson = await aiRes.json();
     if (!aiRes.ok) { setStep('step-ai', 'fail'); throw new Error(aiJson.message || aiJson.error || 'Access failed'); }
-    T.dostop = now() - s; $('t-dostop').textContent = ms(T.dostop);
+    T.access = now() - s; $('t-access').textContent = ms(T.access);
     setStep('step-ai', 'done');
 
-    T.skupaj = now() - T0; $('t-skupaj').innerHTML = `<strong>${ms(T.skupaj)}</strong>`;
+    T.total = now() - T0; $('t-total').innerHTML = `<strong>${ms(T.total)}</strong>`;
     $('result').textContent = aiJson.response;
     const explorer = `https://sepolia.etherscan.io/tx/${hash}`;
     $('tx-link').href = explorer;

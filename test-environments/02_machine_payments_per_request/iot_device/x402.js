@@ -1,6 +1,6 @@
 'use strict';
 
-// Node 18: the global WebCrypto is unconditional only from Node 19; the SDK's
+// Node 18: the global WebCrypto is only unconditionally available from Node 19; the SDK's
 // createNonce() would otherwise throw "Crypto API not available". On Node 20+ this is a no-op.
 if (!globalThis.crypto) globalThis.crypto = require('node:crypto').webcrypto;
 
@@ -97,7 +97,7 @@ const enabled = MODE !== 'off';
 const MOCK_TX_PREFIX = '0x6d6f636b6d6f636b'; // "mockmock"
 
 // Safeguard for the test ETH configuration: without a real EIP-3009 contract a
-// real run would fail only at settlement (and casually write "real" rows before
+// real run would fail only at settlement (and incidentally write "real" rows before
 // that). So fail IMMEDIATELY at startup, with instructions.
 if (enabled && !MOCK && /^0x0{40}$/i.test(config.asset)) {
   throw new Error(
@@ -416,7 +416,7 @@ async function settleWithIdempotency({ dbx, payload, requirements, resourceKey, 
   // at most two rounds: a second round is possible only when reconciliation
   // PROVES that the authorization is unused (the row becomes FAILED/retryable → OWNER)
   let owner = false;
-  for (let krog = 0; krog < 2 && !owner; krog++) {
+  for (let round = 0; round < 2 && !owner; round++) {
     const claim = dbx.claimPayment(claimArgs);
     switch (claim.outcome) {
       case 'CONFLICT_RESOURCE':
@@ -718,24 +718,24 @@ function buildMiddleware({ dbx, routes, logger, remote, onSettled }) {
 
     const resourceKey = normResource(req.originalUrl || req.url);
     if (row.resource !== resourceKey) {
-      req.x402 = { outcome: 'spor', koda: 'payment_id_resource_mismatch', paymentKey: key };
+      req.x402 = { outcome: 'conflict', code: 'payment_id_resource_mismatch', paymentKey: key };
       return { grantAccess: true };
     }
     // same resource, a different signature/authorization under the same payment-id → conflict
     const reqs = { scheme: row.scheme, network: row.network, asset: row.asset, amount: row.amount_atomic, payTo: row.pay_to };
     if (fingerprint(payload, reqs, resourceKey) !== row.fingerprint) {
-      req.x402 = { outcome: 'spor', koda: 'payment_id_payload_mismatch', paymentKey: key };
+      req.x402 = { outcome: 'conflict', code: 'payment_id_payload_mismatch', paymentKey: key };
       return { grantAccess: true };
     }
 
     if (['SETTLED', 'SETTLED_UNVERIFIED'].includes(row.status)) {
       req.x402 = row.response_body != null
-        ? { outcome: 'predvajanje', row, paymentKey: key }
-        : { outcome: 'poravnano_brez_telesa', row, paymentKey: key };
+        ? { outcome: 'replay', row, paymentKey: key }
+        : { outcome: 'settled_without_body', row, paymentKey: key };
       return { grantAccess: true };
     }
     if (row.status === 'SETTLING' && row.lease_until >= Date.now()) {
-      req.x402 = { outcome: 'v_teku', koda: 'payment_in_progress', paymentKey: key };
+      req.x402 = { outcome: 'in_progress', code: 'payment_in_progress', paymentKey: key };
       return { grantAccess: true };
     }
     if (row.status === 'BROADCAST' || row.status === 'INDETERMINATE' ||
@@ -751,13 +751,13 @@ function buildMiddleware({ dbx, routes, logger, remote, onSettled }) {
       if (out.http && out.http.status === 200) {
         const fresh = dbx.getPayment(key);
         req.x402 = fresh.response_body != null
-          ? { outcome: 'predvajanje', row: fresh, paymentKey: key }
-          : { outcome: 'poravnano_brez_telesa', row: fresh, paymentKey: key };
+          ? { outcome: 'replay', row: fresh, paymentKey: key }
+          : { outcome: 'settled_without_body', row: fresh, paymentKey: key };
         return { grantAccess: true };
       }
       req.x402 = {
-        outcome: out.http && out.http.status === 409 ? 'v_teku' : 'neuspeh',
-        koda: out.http && out.http.code || 'settlement_failed',
+        outcome: out.http && out.http.status === 409 ? 'in_progress' : 'failed',
+        code: out.http && out.http.code || 'settlement_failed',
         retryAfter: out.http && out.http.retryAfter, paymentKey: key
       };
       return { grantAccess: true };
@@ -777,24 +777,24 @@ function buildMiddleware({ dbx, routes, logger, remote, onSettled }) {
   function x402Route(handler) {
     return async (req, res, next) => {
       const st = req.x402;
-      if (st && st.outcome === 'spor') {
-        return res.status(409).json({ error: 'Payment identifier conflict', code: st.koda });
+      if (st && st.outcome === 'conflict') {
+        return res.status(409).json({ error: 'Payment identifier conflict', code: st.code });
       }
-      if (st && st.outcome === 'v_teku') {
+      if (st && st.outcome === 'in_progress') {
         res.setHeader('Retry-After', String(st.retryAfter || 2));
-        return res.status(409).json({ error: 'Payment not final', code: st.koda });
+        return res.status(409).json({ error: 'Payment not final', code: st.code });
       }
-      if (st && st.outcome === 'neuspeh') {
-        return res.status(402).json({ error: 'Payment failed', code: st.koda });
+      if (st && st.outcome === 'failed') {
+        return res.status(402).json({ error: 'Payment failed', code: st.code });
       }
-      if (st && st.outcome === 'predvajanje') {
+      if (st && st.outcome === 'replay') {
         if (st.row.payment_response) res.setHeader('PAYMENT-RESPONSE', st.row.payment_response);
         res.setHeader('X-X402-Idempotent-Replay', '1');
         res.type('application/json');
         return res.status(st.row.response_status || 200).send(st.row.response_body);
       }
       // fresh payment or settled-without-body: run the handler and capture the body
-      if (st && st.outcome === 'poravnano_brez_telesa' && st.row.payment_response) {
+      if (st && st.outcome === 'settled_without_body' && st.row.payment_response) {
         res.setHeader('PAYMENT-RESPONSE', st.row.payment_response);
         res.setHeader('X-X402-Settlement', st.row.status === 'SETTLED_UNVERIFIED' ? 'unverified' : 'reconciled');
       }

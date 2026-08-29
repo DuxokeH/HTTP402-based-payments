@@ -23,7 +23,7 @@
  *  suite (and by the browser client's button) — never automatically here.
  *
  *  MODES:
- *    --mock   no real chain. Uses server MOCK_VERIFY; t_potrditev = 0 and gas is
+ *    --mock   no real chain. Uses server MOCK_VERIFY; t_confirm = 0 and gas is
  *             left empty. Hundreds of repeatable runs of pure PROTOCOL latency.
  *    --real   real Sepolia transactions (needs a funded wallet.json). Gives the
  *             real confirmation time + real gas, and clean Wireshark captures.
@@ -62,7 +62,7 @@ const PAUSE_MS = parseInt(val('--pause-ms', MODE === 'real' ? '1000' : '0'), 10)
 const PROMPT = val('--prompt', 'Hello, world! This is a test prompt for the measurement.');
 const X402 = has('--x402');   // parallel mode: official x402 v2 (Ethereum Sepolia, test ETH)
 const OUT = val('--out', path.join(__dirname, '..', 'measurements',
-  X402 ? `x402_zdruzena_${MODE}.csv` : `merged_${MODE}.csv`));
+  X402 ? `x402_merged_${MODE}.csv` : `merged_${MODE}.csv`));
 const SECURITY = has('--security');
 
 const http = axios.create({ baseURL: MERCHANT_URL, timeout: 60_000, validateStatus: () => true });
@@ -129,7 +129,7 @@ async function oneRun(i) {
   banner(`RUN ${i} · PHASE 1/4 · 402 challenge (GET ${ENDPOINT})`);
   let s = performance.now();
   const chRes = await http.get(ENDPOINT, { headers: { 'X-Payer': payer } });
-  t.izziv = performance.now() - s;
+  t.challenge = performance.now() - s;
   if (chRes.status !== 402) throw new Error(`Expected 402, got ${chRes.status}`);
   const pay = chRes.data.payment;
   console.log(`  ✓ 402 · requestId=${pay.requestId} · amount=${pay.amount} ${pay.currency} · resource=${pay.resource} · server=${hdr(chRes, 'X-Server-Ms')} ms`);
@@ -141,13 +141,13 @@ async function oneRun(i) {
   if (MODE === 'real') {
     s = performance.now();
     const tx = await wallet.sendTransaction({ to: pay.to, value: ethers.parseEther(String(pay.amount)) });
-    t.oddaja = performance.now() - s;
+    t.submit = performance.now() - s;
     txHash = tx.hash;
     console.log(`  ✓ broadcast · tx=${txHash}\n    https://sepolia.etherscan.io/tx/${txHash}`);
     banner(`RUN ${i} · PHASE 3/4 · Waiting for confirmation (${CONFIRMATIONS} block)`);
     s = performance.now();
     const rc = await tx.wait(CONFIRMATIONS);
-    t.potrditev = performance.now() - s;
+    t.confirm = performance.now() - s;
     blockNumber = rc.blockNumber;
     gasUsed = rc.gasUsed.toString();
     const gp = rc.gasPrice ?? (tx.gasPrice ?? null);
@@ -159,10 +159,10 @@ async function oneRun(i) {
     s = performance.now();
     const dummy = ethers.Wallet.createRandom();
     await dummy.signTransaction({ to: pay.to, value: ethers.parseEther(String(pay.amount)), chainId: 11155111, nonce: 0, gasLimit: 21000n, gasPrice: 1000000000n });
-    t.oddaja = performance.now() - s;
-    t.potrditev = 0; // no chain in mock — excluded from protocol-only latency
+    t.submit = performance.now() - s;
+    t.confirm = 0; // no chain in mock — excluded from protocol-only latency
     txHash = '0x' + Buffer.from(ethers.randomBytes(32)).toString('hex');
-    console.log(`  ✓ (mock) local signing · t_submit=${num(t.oddaja)} ms · confirmation skipped`);
+    console.log(`  ✓ (mock) local signing · t_submit=${num(t.submit)} ms · confirmation skipped`);
   }
   if (PAUSE_MS) await sleep(PAUSE_MS);
 
@@ -170,19 +170,19 @@ async function oneRun(i) {
   // content + proof token out. This replaces folder 01's phases 4 AND 5.
   banner(`RUN ${i} · PHASE 4/4 · Merged exchange (POST ${ENDPOINT}: txHash + prompt)`);
   s = performance.now();
-  const zdRes = await http.post(ENDPOINT, { requestId: pay.requestId, txHash, network: NETWORK, payerAddress: payer, prompt: PROMPT });
-  t.zdruzeno = performance.now() - s;
-  if (zdRes.status !== 200) throw new Error(`merged exchange ${zdRes.status}: ${JSON.stringify(zdRes.data)}`);
-  const proofToken = zdRes.data.proofToken;
-  console.log(`  ✓ 200 OK · content + proof token=${proofToken} · server=${hdr(zdRes, 'X-Server-Ms')} ms · chain=${hdr(zdRes, 'X-Chain-Read-Ms')} ms · external_api=${hdr(zdRes, 'X-Downstream-Ms')} ms`);
+  const mergedRes = await http.post(ENDPOINT, { requestId: pay.requestId, txHash, network: NETWORK, payerAddress: payer, prompt: PROMPT });
+  t.merged = performance.now() - s;
+  if (mergedRes.status !== 200) throw new Error(`merged exchange ${mergedRes.status}: ${JSON.stringify(mergedRes.data)}`);
+  const proofToken = mergedRes.data.proofToken;
+  console.log(`  ✓ 200 OK · content + proof token=${proofToken} · server=${hdr(mergedRes, 'X-Server-Ms')} ms · chain=${hdr(mergedRes, 'X-Chain-Read-Ms')} ms · external_api=${hdr(mergedRes, 'X-Downstream-Ms')} ms`);
 
-  t.skupaj = performance.now() - T0;
+  t.total = performance.now() - T0;
 
   const row = [
     i, nowIso(), MODE,
-    num(t.izziv), num(t.oddaja), num(t.potrditev), num(t.zdruzeno), num(t.skupaj),
-    num(hdr(zdRes, 'X-Server-Ms')), num(hdr(zdRes, 'X-Chain-Read-Ms')), num(hdr(zdRes, 'X-Downstream-Ms')),
-    gasUsed, gasPriceWei, feeWei, feeEth, blockNumber, txHash, zdRes.status
+    num(t.challenge), num(t.submit), num(t.confirm), num(t.merged), num(t.total),
+    num(hdr(mergedRes, 'X-Server-Ms')), num(hdr(mergedRes, 'X-Chain-Read-Ms')), num(hdr(mergedRes, 'X-Downstream-Ms')),
+    gasUsed, gasPriceWei, feeWei, feeEth, blockNumber, txHash, mergedRes.status
   ];
   return { t, row, feeEth };
 }
@@ -205,7 +205,7 @@ async function runMeasurement() {
     console.log(`  Payer wallet: ${wallet.address}  ·  balance: ${ethers.formatEther(bal)} ETH`);
   }
 
-  const collected = { izziv: [], oddaja: [], potrditev: [], zdruzeno: [], skupaj: [] };
+  const collected = { challenge: [], submit: [], confirm: [], merged: [], total: [] };
   let ok = 0; const fees = [];
   for (let i = 1; i <= RUNS; i++) {
     try {
@@ -221,7 +221,7 @@ async function runMeasurement() {
   }
 
   banner(`SUMMARY · succeeded ${ok}/${RUNS} · CSV: ${path.relative(process.cwd(), OUT)}`);
-  const label = { izziv: 't_challenge (402)', oddaja: 't_submit', potrditev: 't_confirm', zdruzeno: 't_merged (proof+delivery)', skupaj: 't_total' };
+  const label = { challenge: 't_challenge (402)', submit: 't_submit', confirm: 't_confirm', merged: 't_merged (proof+delivery)', total: 't_total' };
   console.log('  phase'.padEnd(30) + 'n    min      median   mean     p95      max   [ms]');
   for (const k of Object.keys(collected)) {
     const st = stats(collected[k]); if (!st) continue;
@@ -233,8 +233,8 @@ async function runMeasurement() {
   }
   // JSON summary next to the CSV
   const jsonOut = OUT.replace(/\.csv$/, '_summary.json');
-  const summary = { mode: MODE, potek: 'merged-4-messages', ponovitev: RUNS, succeeded: ok, server: MERCHANT_URL, faze: {} };
-  for (const k of Object.keys(collected)) summary.faze[k] = stats(collected[k]);
+  const summary = { mode: MODE, flow: 'merged-4-messages', runs: RUNS, succeeded: ok, server: MERCHANT_URL, phases: {} };
+  for (const k of Object.keys(collected)) summary.phases[k] = stats(collected[k]);
   if (fees.length) summary.fee_eth = stats(fees);
   fs.writeFileSync(jsonOut, JSON.stringify(summary, null, 2));
   console.log(`\n  Summary JSON: ${path.relative(process.cwd(), jsonOut)}`);
@@ -277,7 +277,7 @@ async function runX402Measurement() {
   console.log(`  Price: ${cfgX.priceAtomic} atomic units (${(parseInt(cfgX.priceAtomic, 10) / 10 ** cfgX.assetDecimals).toFixed(cfgX.assetDecimals)} ${cfgX.assetName}) · gas paid by: server`);
   if (cfgX.mock) console.log('  ⚠ MOCK: settlements are synthetic (tx hash with the 0x6d6f636b6d6f636b prefix) — NOT real measurements.');
 
-  const collected = { t402: [], podpis: [], placilo: [], skupaj: [] };
+  const collected = { t402: [], sign: [], payment: [], total: [] };
   let ok = 0;
   for (let i = 1; i <= RUNS; i++) {
     try {
@@ -286,7 +286,7 @@ async function runX402Measurement() {
         url: `${MERCHANT_URL}/x402/service?prompt=${encodeURIComponent(PROMPT)}`,
         account, client
       });
-      const skupaj = performance.now() - T0;
+      const total = performance.now() - T0;
       if (r.status !== 200) throw new Error(`payment ${r.status}: ${JSON.stringify(await r.res.text().catch(() => ''))}`);
       // gas/block from the server's records (after the measurement, does not affect the phases)
       let block = '', gasUnits = '', gasPriceWei = '';
@@ -294,15 +294,15 @@ async function runX402Measurement() {
       if (pv.status === 200) { block = pv.data.block ?? ''; gasUnits = pv.data.gasUnits ?? ''; gasPriceWei = pv.data.gasPriceWei ?? ''; }
       appendCsv(OUT, [
         i, nowIso(), MODE, 'x402-self', 'direct', cfgX.network, cfgX.assetName, 'server',
-        num(r.t.t402), num(r.t.tPodpis), num(r.t.tPoravnavaHttp), num(skupaj),
+        num(r.t.t402), num(r.t.tSign), num(r.t.tPaymentHttp), num(total),
         num(r.serverMs), num(r.verifyMs), num(r.settleMs),
-        cfgX.priceAtomic, cfgX.assetDecimals, r.paymentId, r.replayed ? 'predvajanje' : 'novo',
+        cfgX.priceAtomic, cfgX.assetDecimals, r.paymentId, r.replayed ? 'replay' : 'new',
         r.paymentResponse ? r.paymentResponse.txHash : '', r.synthetic ? 1 : 0,
         block, gasUnits, gasPriceWei, r.status
       ]);
-      collected.t402.push(r.t.t402); collected.podpis.push(r.t.tPodpis);
-      collected.placilo.push(r.t.tPoravnavaHttp); collected.skupaj.push(skupaj);
-      console.log(`  ✓ ${String(i).padStart(3)} · t_402=${num(r.t.t402)} ms · t_sign=${num(r.t.tPodpis)} ms · t_payment=${num(r.t.tPoravnavaHttp)} ms · tx=${r.paymentResponse ? String(r.paymentResponse.txHash).slice(0, 18) : '—'}…${r.synthetic ? ' (synthetic)' : ''}`);
+      collected.t402.push(r.t.t402); collected.sign.push(r.t.tSign);
+      collected.payment.push(r.t.tPaymentHttp); collected.total.push(total);
+      console.log(`  ✓ ${String(i).padStart(3)} · t_402=${num(r.t.t402)} ms · t_sign=${num(r.t.tSign)} ms · t_payment=${num(r.t.tPaymentHttp)} ms · tx=${r.paymentResponse ? String(r.paymentResponse.txHash).slice(0, 18) : '—'}…${r.synthetic ? ' (synthetic)' : ''}`);
       ok++;
     } catch (e) {
       console.error(`  ✗ RUN ${i} error: ${e.message}`);
@@ -311,7 +311,7 @@ async function runX402Measurement() {
   }
 
   banner(`x402 SUMMARY · succeeded ${ok}/${RUNS} · CSV: ${path.relative(process.cwd(), OUT)}`);
-  const label = { t402: 't_402 (challenge)', podpis: 't_sign (EIP-3009)', placilo: 't_payment (verify+settle+res)', skupaj: 't_total' };
+  const label = { t402: 't_402 (challenge)', sign: 't_sign (EIP-3009)', payment: 't_payment (verify+settle+res)', total: 't_total' };
   console.log('  phase'.padEnd(32) + 'n    min      median   mean     p95      max   [ms]');
   for (const k of Object.keys(collected)) {
     const st = stats(collected[k]); if (!st) continue;
@@ -323,8 +323,8 @@ async function runX402Measurement() {
   console.log('    transfer) AND the gas payer (server ≠ client). Do NOT attribute the differences to the x402');
   console.log('    protocol alone.');
   const jsonOut = OUT.replace(/\.csv$/, '_summary.json');
-  const summary = { mode: MODE, protocol: 'x402-self', network: cfgX.network, asset: cfgX.assetName, gas_payer: 'server', ponovitev: RUNS, succeeded: ok, faze: {} };
-  for (const k of Object.keys(collected)) summary.faze[k] = stats(collected[k]);
+  const summary = { mode: MODE, protocol: 'x402-self', network: cfgX.network, asset: cfgX.assetName, gas_payer: 'server', runs: RUNS, succeeded: ok, phases: {} };
+  for (const k of Object.keys(collected)) summary.phases[k] = stats(collected[k]);
   fs.writeFileSync(jsonOut, JSON.stringify(summary, null, 2));
   console.log(`  Summary JSON: ${path.relative(process.cwd(), jsonOut)}`);
 }
@@ -338,9 +338,9 @@ async function runX402Security() {
   const url = `${MERCHANT_URL}/x402/service`;
   banner(`x402 SECURITY AND FAILURE TESTS · server=${MERCHANT_URL}`);
   const results = [];
-  const rec = (ime, expected, actual, ok, note = '') => {
-    results.push({ ime, expected, actual, ok, note });
-    console.log(`  ${ok ? '✓' : '✗'} ${ime.padEnd(44)} expected=${String(expected).padEnd(18)} actual=${String(actual).padEnd(9)} ${note}`);
+  const rec = (name, expected, actual, ok, note = '') => {
+    results.push({ name, expected, actual, ok, note });
+    console.log(`  ${ok ? '✓' : '✗'} ${name.padEnd(44)} expected=${String(expected).padEnd(18)} actual=${String(actual).padEnd(9)} ${note}`);
   };
 
   // T1: no payment → 402 with the PAYMENT-REQUIRED header (x402 v2)
@@ -352,21 +352,21 @@ async function runX402Security() {
       r.status === 402 && !!j && j.x402Version === 2);
   }
   // T2: valid payment → 200 + PAYMENT-RESPONSE (+ a synthetic hash in mock)
-  let prvi;
+  let first;
   {
-    prvi = await x402o.payFlow({ url, account, client });
-    rec('T2 valid payment', 200, prvi.status, prvi.status === 200 && !!prvi.paymentResponse,
-      prvi.synthetic ? 'synthetic tx (mock)' : '');
+    first = await x402o.payFlow({ url, account, client });
+    rec('T2 valid payment', 200, first.status, first.status === 200 && !!first.paymentResponse,
+      first.synthetic ? 'synthetic tx (mock)' : '');
   }
   // T3: repeat of the SAME signed payment → cached response, no new settlement
   {
-    const r = await x402o.payFlow({ url, account, client, reuseHeaders: prvi.signedHeaders, paymentId: prvi.paymentId });
+    const r = await x402o.payFlow({ url, account, client, reuseHeaders: first.signedHeaders, paymentId: first.paymentId });
     rec('T3 repeat → idempotent replay', '200+replay', `${r.status}${r.replayed ? '+replay' : ''}`,
       r.status === 200 && r.replayed);
   }
   // T4: same payment-id, DIFFERENT signature → 409 conflict
   {
-    const r = await x402o.payFlow({ url, account, client, paymentId: prvi.paymentId });
+    const r = await x402o.payFlow({ url, account, client, paymentId: first.paymentId });
     rec('T4 same payment-id, other authorization', 409, r.status, r.status === 409);
   }
   // T5: wrong recipient (payTo tampered with after signing) → 402
@@ -386,9 +386,9 @@ async function runX402Security() {
   }
   // T8: a foreign signer impersonating the payer → 402
   {
-    const vsiljivec = x402o.makePayer({});
-    const clientV = x402o.makeClient(vsiljivec);
-    const r = await x402o.payFlow({ url, account: vsiljivec, client: clientV, mutateAuthorization: (a) => { a.from = account.address; } });
+    const attacker = x402o.makePayer({});
+    const clientV = x402o.makeClient(attacker);
+    const r = await x402o.payFlow({ url, account: attacker, client: clientV, mutateAuthorization: (a) => { a.from = account.address; } });
     rec('T8 forged payer (foreign signature)', 402, r.status, r.status === 402);
   }
   // T9: concurrent duplicate — the SAME signed payment 5×: exactly one settlement
@@ -403,7 +403,7 @@ async function runX402Security() {
   }
   // T10: an authorization for one resource does not unlock another (payment-id bound to the resource)
   {
-    const r = await fetch(`${MERCHANT_URL}/x402/payment/ne-obstaja`, {});
+    const r = await fetch(`${MERCHANT_URL}/x402/payment/does-not-exist`, {});
     rec('T10 unknown payment → 404', 404, r.status, r.status === 404);
   }
   // T11: simulated settlement revert → 402, a repeat does NOT settle a second time
@@ -442,7 +442,7 @@ async function runX402Security() {
   const csvOut = path.join(__dirname, '..', 'measurements', `security_tests_x402_${MODE}.csv`);
   fs.mkdirSync(path.dirname(csvOut), { recursive: true });
   fs.writeFileSync(csvOut, 'test,expected,actual,passed,note\n' +
-    results.map((r) => [JSON.stringify(r.ime), r.expected, r.actual, r.ok ? 1 : 0, JSON.stringify(r.note)].join(',')).join('\n') + '\n');
+    results.map((r) => [JSON.stringify(r.name), r.expected, r.actual, r.ok ? 1 : 0, JSON.stringify(r.note)].join(',')).join('\n') + '\n');
   console.log(`  CSV: ${path.relative(process.cwd(), csvOut)}`);
   if (okAll !== results.length) process.exitCode = 1;
 }
@@ -452,38 +452,38 @@ async function runX402Security() {
 // rejects it. Targets the MERGED protocol: malformed claims go to POST /service
 // (there is no /verify-payment). Real-only tests are skipped in mock mode.
 async function runSecurity() {
-  banner(`VARNOSTNI IN ODPOVEDNI TESTI · način=${MODE.toUpperCase()} · server=${MERCHANT_URL}`);
+  banner(`SECURITY AND FAILURE TESTS · mode=${MODE.toUpperCase()} · server=${MERCHANT_URL}`);
   const results = [];
-  const rec = (ime, expected, actual, ok, note = '') => {
-    results.push({ ime, expected, actual, ok, note });
-    console.log(`  ${ok ? '✓' : '✗'} ${ime.padEnd(42)} pričakovano=${String(expected).padEnd(18)} actual=${actual} ${note}`);
+  const rec = (name, expected, actual, ok, note = '') => {
+    results.push({ name, expected, actual, ok, note });
+    console.log(`  ${ok ? '✓' : '✗'} ${name.padEnd(42)} expected=${String(expected).padEnd(18)} actual=${actual} ${note}`);
   };
 
   // T1 — access without payment must be 402
   let r = await http.get(ENDPOINT);
-  rec('Dostop brez plačila', 402, r.status, r.status === 402);
+  rec('Access without payment', 402, r.status, r.status === 402);
 
   // T2 — malformed txHash in the merged POST must be 400
   const ch = await http.get(ENDPOINT, { headers: { 'X-Payer': ethers.Wallet.createRandom().address } });
   const reqId = ch.data.payment.requestId;
   r = await http.post(ENDPOINT, { requestId: reqId, txHash: '0xdeadbeef', network: NETWORK, payerAddress: ethers.Wallet.createRandom().address, prompt: 'x' });
-  rec('Napačen format txHash', 400, r.status, r.status === 400);
+  rec('Malformed txHash format', 400, r.status, r.status === 400);
 
   // T3 — unknown requestId must be 400
   r = await http.post(ENDPOINT, { requestId: '00000000-0000-4000-8000-000000000000', txHash: '0x' + 'ab'.repeat(32), network: NETWORK, payerAddress: ethers.Wallet.createRandom().address, prompt: 'x' });
-  rec('Neobstoječ requestId', 400, r.status, r.status === 400);
+  rec('Non-existent requestId', 400, r.status, r.status === 400);
 
   // T4 — invalid proof token on POST /service (fallback path) must be 403
-  r = await http.post(ENDPOINT, { prompt: 'x' }, { headers: { 'X-Payment': 'proof_ponaredek' } });
-  rec('Ponarejen dokazni žeton', 403, r.status, r.status === 403);
+  r = await http.post(ENDPOINT, { prompt: 'x' }, { headers: { 'X-Payment': 'proof_forged' } });
+  rec('Forged proof token', 403, r.status, r.status === 403);
 
   // T5 — invalid proof token on GET acknowledgment must be 403
-  r = await http.get(ENDPOINT, { headers: { 'X-Payment': 'proof_ponaredek' } });
-  rec('Ponarejeno dokazilo (GET)', 403, r.status, r.status === 403);
+  r = await http.get(ENDPOINT, { headers: { 'X-Payment': 'proof_forged' } });
+  rec('Forged proof (GET)', 403, r.status, r.status === 403);
 
   // T6 — malformed JSON body must be 400, not 500
-  r = await http.post(ENDPOINT, '{pokvarjen', { headers: { 'Content-Type': 'application/json' } });
-  rec('Pokvarjen JSON', 400, r.status, r.status === 400);
+  r = await http.post(ENDPOINT, '{malformed', { headers: { 'Content-Type': 'application/json' } });
+  rec('Malformed JSON', 400, r.status, r.status === 400);
 
   if (MODE === 'mock') {
     // In mock the server fabricates the tx from the request, so we CAN exercise
@@ -496,32 +496,32 @@ async function runSecurity() {
     const proof = z1.data.proofToken;
 
     // T7 — the merged exchange itself must be 200 with content AND proof
-    rec('Združena izmenjava (200 + žeton)', 200, z1.status, z1.status === 200 && !!proof && !!z1.data.response);
+    rec('Merged exchange (200 + token)', 200, z1.status, z1.status === 200 && !!proof && !!z1.data.response);
 
     // T8 — replay same txHash (new request) must be 400 "already redeemed"
     const c2 = await http.get(ENDPOINT, { headers: { 'X-Payer': payer } });
-    const z2 = await http.post(ENDPOINT, { requestId: c2.data.payment.requestId, txHash: txh, network: NETWORK, payerAddress: payer, prompt: 'spet' });
-    rec('Ponovitev txHash (replay)', 400, z2.status, z2.status === 400, z2.data?.error || '');
+    const z2 = await http.post(ENDPOINT, { requestId: c2.data.payment.requestId, txHash: txh, network: NETWORK, payerAddress: payer, prompt: 'again' });
+    rec('txHash replay', 400, z2.status, z2.status === 400, z2.data?.error || '');
 
     // T9 — acknowledgment GET with the earned proof must be 200 (consumed=true)
     const a1 = await http.get(ENDPOINT, { headers: { 'X-Payment': proof } });
-    rec('Potrditev dokazila (GET)', 200, a1.status, a1.status === 200 && a1.data.authorized === true && a1.data.consumed === true);
+    rec('Proof acknowledgment (GET)', 200, a1.status, a1.status === 200 && a1.data.authorized === true && a1.data.consumed === true);
 
     // T10 — re-redeeming the consumed proof via the fallback POST must be 403
-    const a2 = await http.post(ENDPOINT, { prompt: 'spet' }, { headers: { 'X-Payment': proof } });
-    rec('Ponovna poraba žetona', 403, a2.status, a2.status === 403);
+    const a2 = await http.post(ENDPOINT, { prompt: 'again' }, { headers: { 'X-Payment': proof } });
+    rec('Repeated token consumption', 403, a2.status, a2.status === 403);
   } else {
-    rec('Napačen prejemnik', 400, 'preskočeno', true, '(real: pošlji tx na napačen naslov)');
-    rec('Prenizek znesek', 400, 'preskočeno', true, '(real: pošlji manj kot cena)');
-    rec('Neujemanje plačnika', 400, 'preskočeno', true, '(real: plačaj z druge denarnice)');
+    rec('Wrong recipient', 400, 'skipped', true, '(real: send the tx to the wrong address)');
+    rec('Amount too low', 400, 'skipped', true, '(real: send less than the price)');
+    rec('Payer mismatch', 400, 'skipped', true, '(real: pay from a different wallet)');
   }
 
   const passed = results.filter(x => x.ok).length;
-  banner(`REZULTAT VARNOSTNIH TESTOV · ${passed}/${results.length} uspešnih`);
+  banner(`SECURITY TEST RESULT · ${passed}/${results.length} passed`);
   const out = path.join(__dirname, '..', 'measurements', `security_tests_${MODE}.csv`);
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, 'test,expected,actual,passed,note\n' +
-    results.map(x => [JSON.stringify(x.ime), x.expected, x.actual, x.ok ? 'da' : 'ne', JSON.stringify(x.note)].join(',')).join('\n') + '\n');
+    results.map(x => [JSON.stringify(x.name), x.expected, x.actual, x.ok ? 'yes' : 'no', JSON.stringify(x.note)].join(',')).join('\n') + '\n');
   console.log(`  CSV: ${path.relative(process.cwd(), out)}`);
 }
 
@@ -530,14 +530,14 @@ async function runSecurity() {
   try {
     // sanity: server reachable
     const h = await http.get('/health');
-    if (h.status >= 500 && !SECURITY) console.warn('  ⚠ /health poroča degraded — nadaljujem (mock?)');
+    if (h.status >= 500 && !SECURITY) console.warn('  ⚠ /health reports degraded — continuing (mock?)');
     if (X402 && SECURITY) await runX402Security();
     else if (X402) await runX402Measurement();
     else if (SECURITY) await runSecurity();
     else await runMeasurement();
   } catch (e) {
-    console.error('Fatalna napaka:', e.message);
-    console.error('Je strežnik zagnan?  cd ../server && npm start');
+    console.error('Fatal error:', e.message);
+    console.error('Is the server running?  cd ../server && npm start');
     process.exit(1);
   }
 })();

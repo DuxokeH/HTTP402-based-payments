@@ -58,7 +58,7 @@ const PAUSE_MS = parseInt(val('--pause-ms', MODE === 'real' ? '1000' : '0'), 10)
 const PROMPT = val('--prompt', 'Hello, world! This is a test prompt for the measurement.');
 const X402 = has('--x402');   // NEW parallel mode: official x402 v2 (Ethereum Sepolia, test ETH)
 const OUT = val('--out', path.join(__dirname, '..', 'measurements',
-  X402 ? `x402_enkratna_${MODE}.csv` : `one_time_${MODE}.csv`));
+  X402 ? `x402_one_time_${MODE}.csv` : `one_time_${MODE}.csv`));
 const SECURITY = has('--security');
 
 const http = axios.create({ baseURL: MERCHANT_URL, timeout: 60_000, validateStatus: () => true });
@@ -125,7 +125,7 @@ async function oneRun(i) {
   banner(`RUN ${i} · PHASE 1/5 · 402 challenge (GET ${ENDPOINT})`);
   let s = performance.now();
   const chRes = await http.get(ENDPOINT, { headers: { 'X-Payer': payer } });
-  t.izziv = performance.now() - s;
+  t.challenge = performance.now() - s;
   if (chRes.status !== 402) throw new Error(`Expected 402, got ${chRes.status}`);
   const pay = chRes.data.payment;
   console.log(`  ✓ 402 · requestId=${pay.requestId} · amount=${pay.amount} ${pay.currency} · resource=${pay.resource} · server=${hdr(chRes, 'X-Server-Ms')} ms`);
@@ -137,13 +137,13 @@ async function oneRun(i) {
   if (MODE === 'real') {
     s = performance.now();
     const tx = await wallet.sendTransaction({ to: pay.to, value: ethers.parseEther(String(pay.amount)) });
-    t.oddaja = performance.now() - s;
+    t.submit = performance.now() - s;
     txHash = tx.hash;
     console.log(`  ✓ broadcast · tx=${txHash}\n    https://sepolia.etherscan.io/tx/${txHash}`);
     banner(`RUN ${i} · PHASE 3/5 · Waiting for confirmation (${CONFIRMATIONS} block)`);
     s = performance.now();
     const rc = await tx.wait(CONFIRMATIONS);
-    t.potrditev = performance.now() - s;
+    t.confirm = performance.now() - s;
     blockNumber = rc.blockNumber;
     gasUsed = rc.gasUsed.toString();
     const gp = rc.gasPrice ?? (tx.gasPrice ?? null);
@@ -155,10 +155,10 @@ async function oneRun(i) {
     s = performance.now();
     const dummy = ethers.Wallet.createRandom();
     await dummy.signTransaction({ to: pay.to, value: ethers.parseEther(String(pay.amount)), chainId: 11155111, nonce: 0, gasLimit: 21000n, gasPrice: 1000000000n });
-    t.oddaja = performance.now() - s;
-    t.potrditev = 0; // no chain in mock — excluded from protocol-only latency
+    t.submit = performance.now() - s;
+    t.confirm = 0; // no chain in mock — excluded from protocol-only latency
     txHash = '0x' + Buffer.from(ethers.randomBytes(32)).toString('hex');
-    console.log(`  ✓ (mock) local signing · t_submit=${num(t.oddaja)} ms · confirmation skipped`);
+    console.log(`  ✓ (mock) local signing · t_submit=${num(t.submit)} ms · confirmation skipped`);
   }
   if (PAUSE_MS) await sleep(PAUSE_MS);
 
@@ -166,7 +166,7 @@ async function oneRun(i) {
   banner(`RUN ${i} · PHASE 4/5 · Verification (POST /verify-payment)`);
   s = performance.now();
   const vfRes = await http.post('/verify-payment', { requestId: pay.requestId, txHash, network: NETWORK, payerAddress: payer });
-  t.preverjanje = performance.now() - s;
+  t.verify = performance.now() - s;
   if (vfRes.status !== 200) throw new Error(`verify-payment ${vfRes.status}: ${JSON.stringify(vfRes.data)}`);
   const proofToken = vfRes.data.proofToken;
   console.log(`  ✓ proof token=${proofToken} · server=${hdr(vfRes, 'X-Server-Ms')} ms · chain=${hdr(vfRes, 'X-Chain-Read-Ms')} ms`);
@@ -176,15 +176,15 @@ async function oneRun(i) {
   banner(`RUN ${i} · PHASE 5/5 · Access (POST ${ENDPOINT}, X-Payment)`);
   s = performance.now();
   const acRes = await http.post(ENDPOINT, { prompt: PROMPT }, { headers: { 'X-Payment': proofToken } });
-  t.dostop = performance.now() - s;
+  t.access = performance.now() - s;
   if (acRes.status !== 200) throw new Error(`service ${acRes.status}: ${JSON.stringify(acRes.data)}`);
   console.log(`  ✓ 200 OK · server=${hdr(acRes, 'X-Server-Ms')} ms · external_api=${hdr(acRes, 'X-Downstream-Ms')} ms`);
 
-  t.skupaj = performance.now() - T0;
+  t.total = performance.now() - T0;
 
   const row = [
     i, nowIso(), MODE,
-    num(t.izziv), num(t.oddaja), num(t.potrditev), num(t.preverjanje), num(t.dostop), num(t.skupaj),
+    num(t.challenge), num(t.submit), num(t.confirm), num(t.verify), num(t.access), num(t.total),
     num(hdr(vfRes, 'X-Server-Ms')), num(hdr(vfRes, 'X-Chain-Read-Ms')), num(hdr(acRes, 'X-Server-Ms')), num(hdr(acRes, 'X-Downstream-Ms')),
     gasUsed, gasPriceWei, feeWei, feeEth, blockNumber, txHash, acRes.status
   ];
@@ -209,7 +209,7 @@ async function runMeasurement() {
     console.log(`  Payer wallet: ${wallet.address}  ·  balance: ${ethers.formatEther(bal)} ETH`);
   }
 
-  const collected = { izziv: [], oddaja: [], potrditev: [], preverjanje: [], dostop: [], skupaj: [] };
+  const collected = { challenge: [], submit: [], confirm: [], verify: [], access: [], total: [] };
   let ok = 0; const fees = [];
   for (let i = 1; i <= RUNS; i++) {
     try {
@@ -225,7 +225,7 @@ async function runMeasurement() {
   }
 
   banner(`SUMMARY · succeeded ${ok}/${RUNS} · CSV: ${path.relative(process.cwd(), OUT)}`);
-  const label = { izziv: 't_challenge (402)', oddaja: 't_submit', potrditev: 't_confirm', preverjanje: 't_verify', dostop: 't_access', skupaj: 't_total' };
+  const label = { challenge: 't_challenge (402)', submit: 't_submit', confirm: 't_confirm', verify: 't_verify', access: 't_access', total: 't_total' };
   console.log('  phase'.padEnd(24) + 'n    min      median   mean     p95      max   [ms]');
   for (const k of Object.keys(collected)) {
     const st = stats(collected[k]); if (!st) continue;
@@ -237,8 +237,8 @@ async function runMeasurement() {
   }
   // JSON summary next to the CSV
   const jsonOut = OUT.replace(/\.csv$/, '_summary.json');
-  const summary = { mode: MODE, ponovitev: RUNS, succeeded: ok, server: MERCHANT_URL, faze: {} };
-  for (const k of Object.keys(collected)) summary.faze[k] = stats(collected[k]);
+  const summary = { mode: MODE, runs: RUNS, succeeded: ok, server: MERCHANT_URL, phases: {} };
+  for (const k of Object.keys(collected)) summary.phases[k] = stats(collected[k]);
   if (fees.length) summary.fee_eth = stats(fees);
   fs.writeFileSync(jsonOut, JSON.stringify(summary, null, 2));
   console.log(`\n  Summary JSON: ${path.relative(process.cwd(), jsonOut)}`);
@@ -279,9 +279,9 @@ async function runX402Measurement() {
   banner(`x402 v2 MEASUREMENT (exact · ${cfgX.network} · ${cfgX.assetName}) · mode=${MODE.toUpperCase()} · runs=${RUNS}`);
   console.log(`  Payer (authorization signer): ${account.address} · recipient: ${cfgX.payTo}`);
   console.log(`  Price: ${cfgX.priceAtomic} atomic units (${(parseInt(cfgX.priceAtomic, 10) / 10 ** cfgX.assetDecimals).toFixed(cfgX.assetDecimals)} ${cfgX.assetName}) · gas paid by: server`);
-  if (cfgX.mock) console.log('  ⚠ MOCK: settlements are synthetic (tx hash with the 0x6d6f636b6d6f636b prefix) — NOT real transactions.');
+  if (cfgX.mock) console.log('  ⚠ MOCK: settlements are synthetic (tx hash with the 0x6d6f636b6d6f636b prefix) — NOT real measurements.');
 
-  const collected = { t402: [], podpis: [], placilo: [], skupaj: [] };
+  const collected = { t402: [], sign: [], payment: [], total: [] };
   let ok = 0;
   for (let i = 1; i <= RUNS; i++) {
     try {
@@ -290,7 +290,7 @@ async function runX402Measurement() {
         url: `${MERCHANT_URL}/x402/service?prompt=${encodeURIComponent(PROMPT)}`,
         account, client
       });
-      const skupaj = performance.now() - T0;
+      const total = performance.now() - T0;
       if (r.status !== 200) throw new Error(`payment ${r.status}: ${JSON.stringify(await r.res.text().catch(() => ''))}`);
       // gas/block from the server's records (after the measurement, does not affect the phases)
       let block = '', gasUnits = '', gasPriceWei = '';
@@ -298,15 +298,15 @@ async function runX402Measurement() {
       if (pv.status === 200) { block = pv.data.block ?? ''; gasUnits = pv.data.gasUnits ?? ''; gasPriceWei = pv.data.gasPriceWei ?? ''; }
       appendCsv(OUT, [
         i, nowIso(), MODE, 'x402-self', 'direct', cfgX.network, cfgX.assetName, 'server',
-        num(r.t.t402), num(r.t.tPodpis), num(r.t.tPoravnavaHttp), num(skupaj),
+        num(r.t.t402), num(r.t.tSign), num(r.t.tPaymentHttp), num(total),
         num(r.serverMs), num(r.verifyMs), num(r.settleMs),
-        cfgX.priceAtomic, cfgX.assetDecimals, r.paymentId, r.replayed ? 'predvajanje' : 'novo',
+        cfgX.priceAtomic, cfgX.assetDecimals, r.paymentId, r.replayed ? 'replay' : 'new',
         r.paymentResponse ? r.paymentResponse.txHash : '', r.synthetic ? 1 : 0,
         block, gasUnits, gasPriceWei, r.status
       ]);
-      collected.t402.push(r.t.t402); collected.podpis.push(r.t.tPodpis);
-      collected.placilo.push(r.t.tPoravnavaHttp); collected.skupaj.push(skupaj);
-      console.log(`  ✓ ${String(i).padStart(3)} · t_402=${num(r.t.t402)} ms · t_sign=${num(r.t.tPodpis)} ms · t_payment=${num(r.t.tPoravnavaHttp)} ms · tx=${r.paymentResponse ? String(r.paymentResponse.txHash).slice(0, 18) : '—'}…${r.synthetic ? ' (synthetic)' : ''}`);
+      collected.t402.push(r.t.t402); collected.sign.push(r.t.tSign);
+      collected.payment.push(r.t.tPaymentHttp); collected.total.push(total);
+      console.log(`  ✓ ${String(i).padStart(3)} · t_402=${num(r.t.t402)} ms · t_sign=${num(r.t.tSign)} ms · t_payment=${num(r.t.tPaymentHttp)} ms · tx=${r.paymentResponse ? String(r.paymentResponse.txHash).slice(0, 18) : '—'}…${r.synthetic ? ' (synthetic)' : ''}`);
       ok++;
     } catch (e) {
       console.error(`  ✗ RUN ${i} error: ${e.message}`);
@@ -315,7 +315,7 @@ async function runX402Measurement() {
   }
 
   banner(`x402 SUMMARY · succeeded ${ok}/${RUNS} · CSV: ${path.relative(process.cwd(), OUT)}`);
-  const label = { t402: 't_402 (challenge)', podpis: 't_sign (EIP-3009)', placilo: 't_payment (verify+settle+res)', skupaj: 't_total' };
+  const label = { t402: 't_402 (challenge)', sign: 't_sign (EIP-3009)', payment: 't_payment (verify+settle+res)', total: 't_total' };
   console.log('  phase'.padEnd(32) + 'n    min      median   mean     p95      max   [ms]');
   for (const k of Object.keys(collected)) {
     const st = stats(collected[k]); if (!st) continue;
@@ -327,8 +327,8 @@ async function runX402Measurement() {
   console.log('    transfer) AND the gas payer (server ≠ client). Do NOT attribute the differences to the x402');
   console.log('    protocol alone.');
   const jsonOut = OUT.replace(/\.csv$/, '_summary.json');
-  const summary = { mode: MODE, protocol: 'x402-self', network: cfgX.network, asset: cfgX.assetName, gas_payer: 'server', ponovitev: RUNS, succeeded: ok, faze: {} };
-  for (const k of Object.keys(collected)) summary.faze[k] = stats(collected[k]);
+  const summary = { mode: MODE, protocol: 'x402-self', network: cfgX.network, asset: cfgX.assetName, gas_payer: 'server', runs: RUNS, succeeded: ok, phases: {} };
+  for (const k of Object.keys(collected)) summary.phases[k] = stats(collected[k]);
   fs.writeFileSync(jsonOut, JSON.stringify(summary, null, 2));
   console.log(`  Summary JSON: ${path.relative(process.cwd(), jsonOut)}`);
 }
@@ -342,9 +342,9 @@ async function runX402Security() {
   const url = `${MERCHANT_URL}/x402/service`;
   banner(`x402 SECURITY AND FAILURE TESTS · server=${MERCHANT_URL}`);
   const results = [];
-  const rec = (ime, expected, actual, ok, note = '') => {
-    results.push({ ime, expected, actual, ok, note });
-    console.log(`  ${ok ? '✓' : '✗'} ${ime.padEnd(44)} expected=${String(expected).padEnd(18)} actual=${String(actual).padEnd(9)} ${note}`);
+  const rec = (name, expected, actual, ok, note = '') => {
+    results.push({ name, expected, actual, ok, note });
+    console.log(`  ${ok ? '✓' : '✗'} ${name.padEnd(44)} expected=${String(expected).padEnd(18)} actual=${String(actual).padEnd(9)} ${note}`);
   };
 
   // T1: no payment → 402 with the PAYMENT-REQUIRED header (x402 v2)
@@ -356,21 +356,21 @@ async function runX402Security() {
       r.status === 402 && !!j && j.x402Version === 2);
   }
   // T2: valid payment → 200 + PAYMENT-RESPONSE (+ a synthetic hash in mock)
-  let prvi;
+  let first;
   {
-    prvi = await x402o.payFlow({ url, account, client });
-    rec('T2 valid payment', 200, prvi.status, prvi.status === 200 && !!prvi.paymentResponse,
-      prvi.synthetic ? 'synthetic tx (mock)' : '');
+    first = await x402o.payFlow({ url, account, client });
+    rec('T2 valid payment', 200, first.status, first.status === 200 && !!first.paymentResponse,
+      first.synthetic ? 'synthetic tx (mock)' : '');
   }
   // T3: repeat of the SAME signed payment → cached response, no new settlement
   {
-    const r = await x402o.payFlow({ url, account, client, reuseHeaders: prvi.signedHeaders, paymentId: prvi.paymentId });
+    const r = await x402o.payFlow({ url, account, client, reuseHeaders: first.signedHeaders, paymentId: first.paymentId });
     rec('T3 repeat → idempotent replay', '200+replay', `${r.status}${r.replayed ? '+replay' : ''}`,
       r.status === 200 && r.replayed);
   }
   // T4: same payment-id, DIFFERENT signature → 409 conflict
   {
-    const r = await x402o.payFlow({ url, account, client, paymentId: prvi.paymentId });
+    const r = await x402o.payFlow({ url, account, client, paymentId: first.paymentId });
     rec('T4 same payment-id, other authorization', 409, r.status, r.status === 409);
   }
   // T5: wrong recipient (payTo tampered with after signing) → 402
@@ -390,9 +390,9 @@ async function runX402Security() {
   }
   // T8: a foreign signer impersonating the payer → 402
   {
-    const vsiljivec = x402o.makePayer({});
-    const clientV = x402o.makeClient(vsiljivec);
-    const r = await x402o.payFlow({ url, account: vsiljivec, client: clientV, mutateAuthorization: (a) => { a.from = account.address; } });
+    const attacker = x402o.makePayer({});
+    const clientV = x402o.makeClient(attacker);
+    const r = await x402o.payFlow({ url, account: attacker, client: clientV, mutateAuthorization: (a) => { a.from = account.address; } });
     rec('T8 forged payer (foreign signature)', 402, r.status, r.status === 402);
   }
   // T9: concurrent duplicate — the SAME signed payment 5×: exactly one settlement
@@ -407,7 +407,7 @@ async function runX402Security() {
   }
   // T10: an authorization for one resource does not unlock another (payment-id bound to the resource)
   {
-    const r = await fetch(`${MERCHANT_URL}/x402/payment/ne-obstaja`, {});
+    const r = await fetch(`${MERCHANT_URL}/x402/payment/does-not-exist`, {});
     rec('T10 unknown payment → 404', 404, r.status, r.status === 404);
   }
   // T11: simulated settlement revert → 402, a repeat does NOT settle a second time
@@ -446,7 +446,7 @@ async function runX402Security() {
   const csvOut = path.join(__dirname, '..', 'measurements', `security_tests_x402_${MODE}.csv`);
   fs.mkdirSync(path.dirname(csvOut), { recursive: true });
   fs.writeFileSync(csvOut, 'test,expected,actual,passed,note\n' +
-    results.map((r) => [JSON.stringify(r.ime), r.expected, r.actual, r.ok ? 1 : 0, JSON.stringify(r.note)].join(',')).join('\n') + '\n');
+    results.map((r) => [JSON.stringify(r.name), r.expected, r.actual, r.ok ? 1 : 0, JSON.stringify(r.note)].join(',')).join('\n') + '\n');
   console.log(`  CSV: ${path.relative(process.cwd(), csvOut)}`);
   if (okAll !== results.length) process.exitCode = 1;
 }
@@ -457,9 +457,9 @@ async function runX402Security() {
 async function runSecurity() {
   banner(`SECURITY AND FAILURE TESTS · mode=${MODE.toUpperCase()} · server=${MERCHANT_URL}`);
   const results = [];
-  const rec = (ime, expected, actual, ok, note = '') => {
-    results.push({ ime, expected, actual, ok, note });
-    console.log(`  ${ok ? '✓' : '✗'} ${ime.padEnd(42)} expected=${String(expected).padEnd(18)} actual=${actual} ${note}`);
+  const rec = (name, expected, actual, ok, note = '') => {
+    results.push({ name, expected, actual, ok, note });
+    console.log(`  ${ok ? '✓' : '✗'} ${name.padEnd(42)} expected=${String(expected).padEnd(18)} actual=${actual} ${note}`);
   };
 
   // T1 — access without payment must be 402
@@ -511,7 +511,7 @@ async function runSecurity() {
   const out = path.join(__dirname, '..', 'measurements', `security_tests_${MODE}.csv`);
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, 'test,expected,actual,passed,note\n' +
-    results.map(x => [JSON.stringify(x.ime), x.expected, x.actual, x.ok ? 'yes' : 'no', JSON.stringify(x.note)].join(',')).join('\n') + '\n');
+    results.map(x => [JSON.stringify(x.name), x.expected, x.actual, x.ok ? 'yes' : 'no', JSON.stringify(x.note)].join(',')).join('\n') + '\n');
   console.log(`  CSV: ${path.relative(process.cwd(), out)}`);
 }
 

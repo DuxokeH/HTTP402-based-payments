@@ -14,7 +14,7 @@
 # the login would go round in circles. The default detection is right for both —
 # behind Caddy (X-Forwarded-Proto: https) it adds `Secure` automatically, on port 8080 it does not.
 
-name: x402-neposredno
+name: x402-direct
 
 services:
   x402-website-direct:
@@ -37,7 +37,7 @@ services:
 
   caddy:
     image: caddy:2-alpine
-    container_name: x402-spletisce-neposredno-caddy
+    container_name: x402-website-direct-caddy
     restart: unless-stopped
     ports:
       - "80:80"

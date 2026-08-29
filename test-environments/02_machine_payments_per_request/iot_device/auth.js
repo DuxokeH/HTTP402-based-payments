@@ -159,7 +159,7 @@ function loadOrCreate({ dataDir, appName, logger }) {
   } catch (e) { logger.warn({ err: e.message }, 'could not write admin-credentials.txt'); }
 
   // Only the file path goes into the log — never the password or the token.
-  logger.info({ username: username, datoteka: plainPath },
+  logger.info({ username: username, file: plainPath },
     generatedPassword !== null
       ? `New admin credentials created. Get the password with:  grep PASSWORD ${plainPath}`
       : `Admin credentials loaded. Get the password with:  grep PASSWORD ${plainPath}`);
@@ -298,7 +298,7 @@ function create({ dataDir, appName, logger, publicPaths = [], homePath = '/' }) 
         sessions.set(sid, { expiresAt: Date.now() + SESSION_TTL * 1000, csrf: rand(24) });
         res.append('Set-Cookie', cookie(sid, req, SESSION_TTL));
         if (wantsHtml) return res.redirect(302, homePath);
-        return res.json({ success: true, username: creds.username, veljaSekund: SESSION_TTL });
+        return res.json({ success: true, username: creds.username, validForSeconds: SESSION_TTL });
       } catch (err) {
         // Without this, a rejected promise in Express 4 would go unhandled and kill the process.
         logger.error({ err: err.message }, 'login error');

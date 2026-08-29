@@ -260,7 +260,7 @@ function cacheResponse(paymentId, status, body) {
 function getPayment(paymentId) { return S.getPayment.get(paymentId) || null; }
 
 function x402Stats() {
-  return { placil: S.countPayments.get().n, poravnanih: S.countSettled.get().n };
+  return { payments: S.countPayments.get().n, settled: S.countSettled.get().n };
 }
 
 function x402Sweep() {
@@ -269,7 +269,7 @@ function x402Sweep() {
   const d = S.sweepOld.run(now);
   const s = S.sweepSessions.run(now);
   const e = S.sweepSessionEvents.run();
-  return { zakupi: l.changes, stara_placila: d.changes, seje: s.changes, dogodki: e.changes };
+  return { leases: l.changes, oldPayments: d.changes, sessions: s.changes, events: e.changes };
 }
 
 // ── credit sessions in atomic units (folder 03 and the websites) ─────────────

@@ -7,7 +7,7 @@ top-up** which opens a **prepaid session**, and from then on pays for every read
 
 Folder `02` is deliberately an expensive baseline (cumulative gas grows linearly with N). This
 folder is its opposite: the chain cost is constant, no matter how many readings are taken.
-Together the two form the key comparison that `../comparison/` brings together.
+Together the two form the key comparison drawn in `../comparison/`.
 
 ## What the experiment measures
 
@@ -242,7 +242,7 @@ automatically and are **not** the result of a measurement.
 
 The `credit_analysis.py` script processes only the rows with `kind=debit` and reads the columns of
 the native flow (`t_sign_ms`, `t_request_ms`, `server_ms`, `price_wei`, `credit_wei`,
-`budget_remaining_wei`, `mode`). It does not process the `x402_dobroimetje_*.csv` files (they carry
+`budget_remaining_wei`, `mode`). It does not process the `x402_credit_*.csv` files (they carry
 atomic-unit columns instead of wei) — those are handled by `../comparison/comparison_x402.py`. For
 the combined comparison with folder `02` (amortisation, on/off-chain latency), see
 `../comparison/`.
@@ -259,7 +259,7 @@ In `measurements/`:
 | `credit_mock.csv` + `credit_mock_summary.json` | `npm run mock` (agent) |
 | `credit_real.csv` + `credit_real_summary.json` | `npm run real` |
 | `security_tests_mock.csv` | `npm run security` |
-| `x402_dobroimetje_mock.csv` / `_real.csv` | `node agent.js --x402` |
+| `x402_credit_mock.csv` / `_real.csv` | `node agent.js --x402` |
 | `security_tests_x402_mock.csv` | `node agent.js --x402 --security` |
 
 The native-flow CSV has 17 columns: `event, timestamp_iso, mode, kind, t_sign_ms, t_request_ms,
@@ -267,7 +267,7 @@ server_ms, t_total_ms, price_wei, credit_wei, budget_remaining_wei, gas_units,
 fee_eth, temperature_c, humidity_pct, nonce, session`. The first row is the top-up (`topup`),
 followed by `debit_1 … debit_N` with `kind=debit`.
 The security-test CSV has the columns `test, expected, actual, passed, note`; in `passed` the native
-suite writes `da`/`ne`, while the x402 suite writes `1`/`0`.
+suite writes `yes`/`no`, while the x402 suite writes `1`/`0`.
 
 In `analysis/figures/`:
 
@@ -306,7 +306,7 @@ npm run security          # node agent.js --security
 | T8 | insufficient credit (deposit of `2 × price`) | `402` |
 | T9 | expired session (`ttlSeconds: 1`) | `403` |
 
-Output: `measurements/security_tests_mock.csv` (the `passed` column holds `da`/`ne`); the console
+Output: `measurements/security_tests_mock.csv` (the `passed` column holds `yes`/`no`); the console
 prints a count of the tests that passed. A non-zero exit code on failure is set only by the x402
 variant of the tests (`--x402 --security`), so for this suite check the result in the console output
 or in the CSV.
@@ -343,7 +343,7 @@ X402_MODE=self X402_MOCK=true npm run mock
 ```bash
 cd agent
 export ADMIN_TOKEN=$(grep '^TOKEN=' ../iot_device/data/admin-credentials.txt | cut -d= -f2)
-node agent.js --x402 --debits 20      # → measurements/x402_dobroimetje_mock.csv
+node agent.js --x402 --debits 20      # → measurements/x402_credit_mock.csv
 node agent.js --x402 --security       # → measurements/security_tests_x402_mock.csv
 ```
 

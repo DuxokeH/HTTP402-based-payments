@@ -105,7 +105,7 @@ const servicePostSchema = z.object({
 
 // Merged exchange: payment proof and prompt travel in the same POST,
 // so verification and delivery fit into a single request/response pair.
-const zdruzenoSchema = z.object({
+const mergedSchema = z.object({
   requestId: uuidSchema,
   txHash: txHashSchema,
   network: z.literal(NETWORK),
@@ -397,7 +397,7 @@ app.post('/service', verifyLimiter, async (req, res) => {
     }
     const { prompt, model: requestedModel } = parsed.data;
 
-    // Daily cost cap (best-effort: based on yesterday's spend; one request through is OK)
+    // Daily cost cap (best-effort: based on the spend so far; one request slipping through is OK)
     const todaySpend = db.getTodayOpenAISpend();
     if (todaySpend >= OPENAI_DAILY_USD_CAP) {
       req.log.warn({ todaySpend }, 'Daily OpenAI cap reached');
@@ -420,7 +420,7 @@ app.post('/service', verifyLimiter, async (req, res) => {
   }
 
   // Merged exchange: verify the on-chain payment and deliver the content.
-  const parsed = zdruzenoSchema.safeParse(req.body);
+  const parsed = mergedSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() });
   }

@@ -57,7 +57,7 @@ const RPC_URL = val('--rpc-url', process.env.RPC_URL || cfg.RPC_URL || 'https://
 // If the agent waited for fewer confirmations than the facilitator requires, every verification
 // would fail — and only after the real transaction had already been paid for.
 let CONFIRMATIONS = parseInt(val('--confirmations', process.env.CONFIRMATIONS || cfg.CONFIRMATIONS || '0'), 10) || 0;
-async function uskladiPotrditve(pcfg) {
+async function syncConfirmations(pcfg) {
   if (CONFIRMATIONS > 0) return CONFIRMATIONS;
   CONFIRMATIONS = (pcfg && parseInt(pcfg.minConfirmations, 10)) || 1;
   return CONFIRMATIONS;
@@ -68,7 +68,7 @@ async function uskladiPotrditve(pcfg) {
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || cfg.ADMIN_TOKEN || '';
 
 const MODE = has('--real') ? 'real' : 'mock';
-const TOK = has('--metered') ? 'metered' : 'tx';
+const FLOW = has('--metered') ? 'metered' : 'tx';
 const QUERIES = parseInt(val('--queries', '20'), 10);
 const DEBITS = parseInt(val('--debits', '20'), 10);
 const PAUSE_MS = parseInt(val('--pause-ms', '0'), 10);
@@ -76,7 +76,7 @@ const TOPUP_WEI = val('--topup-wei', '2500000000000');
 const SECURITY = has('--security');
 const X402 = has('--x402');   // parallel mode: x402 exact via the local facilitator
 const OUT = val('--out', path.join(__dirname, '..', 'measurements',
-  X402 ? `x402_facilitator_tx_${MODE}.csv` : `facilitator_${TOK}_${MODE}.csv`));
+  X402 ? `x402_facilitator_tx_${MODE}.csv` : `facilitator_${FLOW}_${MODE}.csv`));
 
 const merchant = axios.create({ baseURL: MERCHANT_URL, timeout: 120_000, validateStatus: () => true,
   headers: { 'X-Demo-Agent': 'agent', ...(ADMIN_TOKEN ? { Authorization: `Bearer ${ADMIN_TOKEN}` } : {}) } });
@@ -122,7 +122,7 @@ const CSV_METERED = [
 function ensureCsv(f, header) { fs.mkdirSync(path.dirname(f), { recursive: true }); if (!fs.existsSync(f)) fs.writeFileSync(f, header + '\n'); }
 
 // The merchant is closed behind an admin login — without a valid token nothing gets through.
-function napakaPrijave() {
+function loginError() {
   console.error(`
 ❌ The merchant rejected the login (401). The measurement agent needs a machine token.
 
@@ -134,7 +134,7 @@ function napakaPrijave() {
 `);
   process.exitCode = 1;
 }
-function napakaPosrednika(r) {
+function facilitatorError(r) {
   console.error(`
 ❌ The facilitator (${FACILITATOR_URL}) is unreachable${r && r.status ? ` (status ${r.status})` : ''}.
 
@@ -153,10 +153,10 @@ async function runTx() {
   console.log(`  merchant=${MERCHANT_URL} · facilitator=${FACILITATOR_URL} · payer=${wallet.address}`);
 
   const h = await facilitator.get('/health');
-  if (h.status !== 200) return napakaPosrednika(h);
-  await uskladiPotrditve(h.data);
+  if (h.status !== 200) return facilitatorError(h);
+  await syncConfirmations(h.data);
   const c = await merchant.get('/config');
-  if (c.status === 401) return napakaPrijave();
+  if (c.status === 401) return loginError();
   if (c.status !== 200) { console.error(`  ✗ /config ${c.status}`); process.exitCode = 1; return; }
   if (!!c.data.mockVerify !== !!h.data.mockVerify) {
     console.error(`\n❌ Mode mismatch: merchant mockVerify=${c.data.mockVerify}, facilitator mockVerify=${h.data.mockVerify}.`);
@@ -166,21 +166,21 @@ async function runTx() {
   ensureCsv(OUT, CSV_TX);
 
   let cumFee = 0, ok = 0;
-  const tSkupaj = [], tPosr = [];
+  const tTotal = [], tFacilitator = [];
   for (let i = 1; i <= QUERIES; i++) {
     const T0 = performance.now();
     try {
       // 1) 402 challenge (the merchant opens it at the facilitator: M→F, F→M)
       let s = performance.now();
       const ch = await merchant.get('/tx/reading', { headers: { 'X-Payer': wallet.address } });
-      const tIzziv = performance.now() - s;
-      if (ch.status === 401) return napakaPrijave();
-      if (ch.status === 502) return napakaPosrednika(ch);
+      const tChallenge = performance.now() - s;
+      if (ch.status === 401) return loginError();
+      if (ch.status === 502) return facilitatorError(ch);
       if (ch.status !== 402) throw new Error(`expected 402, got ${ch.status}`);
       const pay = ch.data.payment;
 
       // 2) payment on the chain (C→B)
-      let txHash, gasUsed = '', feeEth = '', tVeriga = 0;
+      let txHash, gasUsed = '', feeEth = '', tChain = 0;
       s = performance.now();
       if (MODE === 'real') {
         const tx = await wallet.sendTransaction({ to: pay.to, value: BigInt(pay.priceWei) });
@@ -189,39 +189,39 @@ async function runTx() {
         const gp = rc.gasPrice ?? tx.gasPrice ?? null;
         if (gp) { feeEth = ethers.formatEther(rc.gasUsed * gp); cumFee += parseFloat(feeEth); }
       } else { txHash = randTxHash(); }
-      tVeriga = performance.now() - s;
+      tChain = performance.now() - s;
 
       // 3) report the payment to the FACILITATOR (C→F) — the only call that bypasses the merchant
       s = performance.now();
       const sp = await facilitator.post('/submit-payment', { requestId: pay.requestId, txHash, network: NETWORK, payerAddress: wallet.address });
-      const tPrijava = performance.now() - s;
+      const tReport = performance.now() - s;
       if (sp.status !== 200) throw new Error(`submit-payment ${sp.status}: ${JSON.stringify(sp.data)}`);
       const proofToken = sp.data.proofToken || (sp.data.proof && sp.data.proof.token);
 
       // 4) access at the merchant (C→M; the merchant redeems the token at the facilitator, M→F)
       s = performance.now();
       const rd = await merchant.get('/tx/reading', { headers: { 'X-Payment': proofToken } });
-      const tDostop = performance.now() - s;
+      const tAccess = performance.now() - s;
       if (rd.status !== 200) throw new Error(`reading ${rd.status}: ${JSON.stringify(rd.data)}`);
 
-      const skupaj = performance.now() - T0;
-      const posrIzziv = hdrNum(ch, 'X-Downstream-Ms'), posrDostop = hdrNum(rd, 'X-Downstream-Ms');
-      const posrPrijava = hdrNum(sp, 'X-Server-Ms'), posrVeriga = hdrNum(sp, 'X-Chain-Read-Ms');
+      const total = performance.now() - T0;
+      const facChallenge = hdrNum(ch, 'X-Downstream-Ms'), facAccess = hdrNum(rd, 'X-Downstream-Ms');
+      const facReport = hdrNum(sp, 'X-Server-Ms'), facChain = hdrNum(sp, 'X-Chain-Read-Ms');
       const reading = rd.data.reading;
       fs.appendFileSync(OUT, [
         `query_${i}`, nowIso(), MODE, 'facilitator',
-        num(tIzziv), num(tVeriga), num(tPrijava), num(tDostop), num(skupaj),
+        num(tChallenge), num(tChain), num(tReport), num(tAccess), num(total),
         num(hdrNum(ch, 'X-Server-Ms')), num(hdrNum(rd, 'X-Server-Ms')),
-        num(posrIzziv), num(posrDostop), num(posrPrijava), num(posrVeriga),
+        num(facChallenge), num(facAccess), num(facReport), num(facChain),
         pay.priceWei, gasUsed, feeEth, cumFee ? cumFee.toFixed(8) : '',
         reading.temperature_c, reading.humidity_pct, txHash, pay.requestId
       ].join(',') + '\n');
-      ok++; tSkupaj.push(skupaj); tPosr.push(posrIzziv + posrDostop + posrPrijava);
-      console.log(`  ✓ ${String(i).padStart(3)} · total=${num(skupaj)} ms · challenge=${num(tIzziv)} · chain=${num(tVeriga)} · report=${num(tPrijava)} · access=${num(tDostop)} ms  [facilitator ${num(posrIzziv + posrDostop + posrPrijava)} ms]`);
+      ok++; tTotal.push(total); tFacilitator.push(facChallenge + facAccess + facReport);
+      console.log(`  ✓ ${String(i).padStart(3)} · total=${num(total)} ms · challenge=${num(tChallenge)} · chain=${num(tChain)} · report=${num(tReport)} · access=${num(tAccess)} ms  [facilitator ${num(facChallenge + facAccess + facReport)} ms]`);
     } catch (e) { console.error(`  ✗ ${i}: ${e.message}`); }
     if (PAUSE_MS) await sleep(PAUSE_MS);
   }
-  povzetek('payment per reading', { ok, n: QUERIES, tSkupaj, tPosr, onChain: ok, cumFee });
+  writeSummary('payment per reading', { ok, n: QUERIES, tTotal, tFacilitator, onChain: ok, cumFee });
 }
 
 // ══════════ Metered session via the facilitator ══════════════════════════════
@@ -230,10 +230,10 @@ async function runMetered() {
   console.log(`  merchant=${MERCHANT_URL} · facilitator=${FACILITATOR_URL} · payer=${wallet.address}`);
 
   const h = await facilitator.get('/health');
-  if (h.status !== 200) return napakaPosrednika(h);
-  await uskladiPotrditve(h.data);
+  if (h.status !== 200) return facilitatorError(h);
+  await syncConfirmations(h.data);
   const c = await merchant.get('/config');
-  if (c.status === 401) return napakaPrijave();
+  if (c.status === 401) return loginError();
   if (c.status !== 200) { console.error(`  ✗ /config ${c.status}`); process.exitCode = 1; return; }
   ensureCsv(OUT, CSV_METERED);
   const m = c.data.metered;
@@ -261,7 +261,7 @@ async function runMetered() {
   let s = performance.now();
   const op = await merchant.post('/metered/session/open', { txHash, ...body });
   const tOpen = performance.now() - s;
-  if (op.status === 502) return napakaPosrednika(op);
+  if (op.status === 502) return facilitatorError(op);
   if (op.status !== 200) { console.error(`  ✗ session/open ${op.status}: ${JSON.stringify(op.data)}`); process.exitCode = 1; return; }
   const session = op.data.session;
   console.log(`  ✓ session=${session.sessionId} · credit=${session.depositWei} wei · valid until=${session.expiresAt}`);
@@ -274,34 +274,34 @@ async function runMetered() {
 
   // PHASE B — N signed debits; at the merchant each one goes through the facilitator
   banner(`PHASE B · ${DEBITS} signed debits (no new transactions)`);
-  const tPod = [], tZah = [], tPos = []; let ok = 0;
+  const tSignAll = [], tRequestAll = [], tFacilitatorAll = []; let ok = 0;
   for (let i = 1; i <= DEBITS; i++) {
     const T0 = performance.now();
     try {
       const nonce = mkNonce();
       let t = performance.now();
       const sig = await wallet.signMessage(debitMessage(wallet.address, session.sessionId, nonce, m.resource, maxWei));
-      const tPodpis = performance.now() - t;
+      const tSign = performance.now() - t;
       t = performance.now();
       const r = await merchant.get('/metered/reading-metered', { headers: { 'X-Payer': wallet.address, 'X-Session': session.sessionId, 'X-Nonce': nonce, 'X-Signature': sig, 'X-Max-Wei': maxWei } });
-      const tZahteva = performance.now() - t;
-      if (r.status === 502) return napakaPosrednika(r);
+      const tRequest = performance.now() - t;
+      if (r.status === 502) return facilitatorError(r);
       if (r.status !== 200) throw new Error(`${r.status}: ${JSON.stringify(r.data)}`);
       const reading = r.data.reading;
-      const pos = hdrNum(r, 'X-Downstream-Ms');
+      const fac = hdrNum(r, 'X-Downstream-Ms');
       fs.appendFileSync(OUT, [
         `debit_${i}`, nowIso(), MODE, 'facilitator', 'debit',
-        num(tPodpis), num(tZahteva), num(hdrNum(r, 'X-Server-Ms')), num(pos), num(performance.now() - T0),
+        num(tSign), num(tRequest), num(hdrNum(r, 'X-Server-Ms')), num(fac), num(performance.now() - T0),
         hdr(r, 'X-Charged-Wei'), hdr(r, 'X-Balance-Wei'), hdr(r, 'X-Budget-Remaining-Wei'),
         '', '', reading.temperature_c, reading.humidity_pct, nonce, session.sessionId
       ].join(',') + '\n');
-      ok++; tPod.push(tPodpis); tZah.push(tZahteva); tPos.push(pos);
-      console.log(`  ✓ debit ${String(i).padStart(2)} · T=${reading.temperature_c}°C RH=${reading.humidity_pct}% · t_sign=${num(tPodpis)} ms · t_request=${num(tZahteva)} ms  [facilitator ${num(pos)} ms] · credit=${hdr(r, 'X-Balance-Wei')} wei`);
+      ok++; tSignAll.push(tSign); tRequestAll.push(tRequest); tFacilitatorAll.push(fac);
+      console.log(`  ✓ debit ${String(i).padStart(2)} · T=${reading.temperature_c}°C RH=${reading.humidity_pct}% · t_sign=${num(tSign)} ms · t_request=${num(tRequest)} ms  [facilitator ${num(fac)} ms] · credit=${hdr(r, 'X-Balance-Wei')} wei`);
     } catch (e) { console.error(`  ✗ debit ${i}: ${e.message}`); }
     if (PAUSE_MS) await sleep(PAUSE_MS);
   }
   const fin = (await merchant.get(`/metered/session/${session.sessionId}`)).data.session;
-  povzetek('metered session', { ok, n: DEBITS, tSkupaj: tZah, tPosr: tPos, onChain: 1, cumFee: parseFloat(feeEth || '0'), extra: { tPod, fin } });
+  writeSummary('metered session', { ok, n: DEBITS, tTotal: tRequestAll, tFacilitator: tFacilitatorAll, onChain: 1, cumFee: parseFloat(feeEth || '0'), extra: { tSignAll, fin } });
 }
 
 function st(a) {
@@ -310,18 +310,18 @@ function st(a) {
   const q = p => a[Math.floor(p * (a.length - 1))];
   return { n: a.length, min: a[0], median: q(0.5), mean: a.reduce((s, x) => s + x, 0) / a.length, p95: q(0.95), max: a[a.length - 1] };
 }
-function povzetek(exp, { ok, n, tSkupaj, tPosr, onChain, cumFee, extra }) {
-  const s1 = st(tSkupaj), s2 = st(tPosr);
-  banner(`SUMMARY ${exp} · succeeded ${ok}/${n} · on-chain transactions: ${onChain} · CSV: ${path.relative(process.cwd(), OUT)}`);
-  if (extra && extra.tPod) { const sp = st(extra.tPod); if (sp) console.log(`  t_sign      (ms): median=${num(sp.median)} mean=${num(sp.mean)} p95=${num(sp.p95)}`); }
+function writeSummary(experiment, { ok, n, tTotal, tFacilitator, onChain, cumFee, extra }) {
+  const s1 = st(tTotal), s2 = st(tFacilitator);
+  banner(`SUMMARY ${experiment} · succeeded ${ok}/${n} · on-chain transactions: ${onChain} · CSV: ${path.relative(process.cwd(), OUT)}`);
+  if (extra && extra.tSignAll) { const sp = st(extra.tSignAll); if (sp) console.log(`  t_sign      (ms): median=${num(sp.median)} mean=${num(sp.mean)} p95=${num(sp.p95)}`); }
   if (s1) console.log(`  round trip  (ms): median=${num(s1.median)} mean=${num(s1.mean)} p95=${num(s1.p95)} max=${num(s1.max)}`);
   if (s2) console.log(`  facilitator (ms): median=${num(s2.median)} mean=${num(s2.mean)} p95=${num(s2.p95)} max=${num(s2.max)}   ← in the direct branch (folder 05) this is 0`);
   if (cumFee) console.log(`  cumulative fee: ${cumFee.toFixed(8)} ETH`);
   if (extra && extra.fin) console.log(`  Final session state: credit=${extra.fin.balanceWei} wei · spent=${extra.fin.spentWei} wei`);
   const jsonOut = OUT.replace(/\.csv$/, '_summary.json');
-  fs.writeFileSync(jsonOut, JSON.stringify({ poskus: exp, mode: MODE, topology: 'facilitator', n, succeeded: ok,
-    onChainTransactions: onChain, obhod_ms: s1, facilitator_ms: s2,
-    ...(extra && extra.tPod ? { t_sign_ms: st(extra.tPod) } : {}), ...(extra && extra.fin ? { session: extra.fin } : {}) }, null, 2));
+  fs.writeFileSync(jsonOut, JSON.stringify({ experiment: experiment, mode: MODE, topology: 'facilitator', n, succeeded: ok,
+    onChainTransactions: onChain, roundtrip_ms: s1, facilitator_ms: s2,
+    ...(extra && extra.tSignAll ? { t_sign_ms: st(extra.tSignAll) } : {}), ...(extra && extra.fin ? { session: extra.fin } : {}) }, null, 2));
   console.log(`  JSON summary: ${path.relative(process.cwd(), jsonOut)}`);
 }
 
@@ -330,18 +330,18 @@ async function runSecurity() {
   banner('SECURITY AND FAILURE TESTS (facilitator branch)');
   if (MODE === 'real') { console.error('  The security tests are meant for --mock. Run: node agent.js --security'); process.exit(1); }
   const results = [];
-  const rec = (ime, prc, dej, ok, op = '') => { results.push({ ime, prc, dej, ok }); console.log(`  ${ok ? '✓' : '✗'} ${ime.padEnd(50)} expected=${String(prc).padEnd(9)} actual=${String(dej).padEnd(9)} ${op}`); };
+  const rec = (name, expected, actual, ok, note = '') => { results.push({ name, expected, actual, ok }); console.log(`  ${ok ? '✓' : '✗'} ${name.padEnd(50)} expected=${String(expected).padEnd(9)} actual=${String(actual).padEnd(9)} ${note}`); };
 
   const h = await facilitator.get('/health');
-  if (h.status !== 200) return napakaPosrednika(h);
+  if (h.status !== 200) return facilitatorError(h);
   const c = await merchant.get('/config');
-  if (c.status === 401) return napakaPrijave();
+  if (c.status === 401) return loginError();
   const price = BigInt(c.data.tx.priceWei);
   const m = c.data.metered;
   const maxWei = (BigInt(m.priceWeiPerCall) + BigInt(m.priceWeiPerByte) * 4096n).toString();
 
   // helper: the whole flow up to the proof token
-  const doIzziv = async () => (await merchant.get('/tx/reading', { headers: { 'X-Payer': wallet.address } })).data.payment;
+  const doChallenge = async () => (await merchant.get('/tx/reading', { headers: { 'X-Payer': wallet.address } })).data.payment;
   const doSubmit = (requestId, txHash, over) => facilitator.post('/submit-payment', { requestId, txHash, network: NETWORK, payerAddress: wallet.address, ...over });
 
   // ── T1: the merchant really has no chain ──────────────────────────────────
@@ -353,7 +353,7 @@ async function runSecurity() {
   rec('Merchant no longer has /tx/verify (payment is reported to the facilitator)', 404, tv.status, tv.status === 404);
 
   // ── T3: BUG 1 — the proof token is single-use ─────────────────────────────
-  let pay = await doIzziv();
+  let pay = await doChallenge();
   let sp = await doSubmit(pay.requestId, randTxHash());
   rec('Payment report → proof token', 200, sp.status, sp.status === 200);
   const tok = sp.data.proofToken;
@@ -363,16 +363,16 @@ async function runSecurity() {
   rec('BUG 1 · second use of the same proof', 403, a2.status, a2.status === 403, a2.data?.error || '');
 
   // ── T4: BUG 2 — one transaction cannot redeem two requests ────────────────
-  const skupniTx = randTxHash();
-  const p1 = await doIzziv(); const r1 = await doSubmit(p1.requestId, skupniTx);
-  const p2 = await doIzziv(); const r2 = await doSubmit(p2.requestId, skupniTx);
+  const sharedTx = randTxHash();
+  const p1 = await doChallenge(); const r1 = await doSubmit(p1.requestId, sharedTx);
+  const p2 = await doChallenge(); const r2 = await doSubmit(p2.requestId, sharedTx);
   rec('BUG 2 · same transaction for a second request', 400, r2.status, r1.status === 200 && r2.status === 400, r2.data?.error || '');
 
   // ── T5: BUG 3 — one wei short is short (integer comparison) ────────────────
-  const p3 = await doIzziv();
+  const p3 = await doChallenge();
   const r3 = await doSubmit(p3.requestId, randTxHash(), { mockValueWei: (price - 1n).toString() });
   rec('BUG 3 · payment 1 wei too low', 400, r3.status, r3.status === 400, r3.data?.error || '');
-  const p4 = await doIzziv();
+  const p4 = await doChallenge();
   const r4 = await doSubmit(p4.requestId, randTxHash(), { mockValueWei: price.toString() });
   rec('BUG 3 · payment exactly the amount', 200, r4.status, r4.status === 200);
 
@@ -429,14 +429,14 @@ async function runSecurity() {
   banner(`RESULT: ${ok}/${results.length} tests passed`);
   const out = path.join(__dirname, '..', 'measurements', 'facilitator_security.csv');
   fs.mkdirSync(path.dirname(out), { recursive: true });
-  fs.writeFileSync(out, 'test,expected,actual,passed\n' + results.map(x => `"${x.ime}",${x.prc},${x.dej},${x.ok ? 1 : 0}`).join('\n') + '\n');
+  fs.writeFileSync(out, 'test,expected,actual,passed\n' + results.map(x => `"${x.name}",${x.expected},${x.actual},${x.ok ? 1 : 0}`).join('\n') + '\n');
   console.log(`  CSV: ${path.relative(process.cwd(), out)}`);
   if (ok !== results.length) process.exitCode = 1;
 }
 
 // ── main ─────────────────────────────────────────────────────────────────────
 // ══════════ x402 v2 (PARALLEL MODE) — facilitated via the facilitator ════════
-// The client signs an EIP-3009 authorisation and submits NO transaction of its own;
+// The client signs an EIP-3009 authorization and submits NO transaction of its own;
 // the merchant delegates verification/settlement to the FACILITATOR, which pays the
 // gas. What is measured is the whole round trip at the merchant + the facilitator's
 // side, via the /x402/payment/:id lookup.
@@ -463,7 +463,7 @@ function loadX402Payer() {
 
 async function runX402Tx() {
   const c = await merchant.get('/x402/config');
-  if (c.status === 401) return napakaPrijave();
+  if (c.status === 401) return loginError();
   if (c.status !== 200 || !c.data || c.data.mode === 'off') {
     console.error('❌ The merchant does not have x402 mode enabled (X402_MODE=facilitated on the merchant, X402_MODE=self on the facilitator).'); process.exit(1);
   }
@@ -487,7 +487,7 @@ async function runX402Tx() {
         url: `${MERCHANT_URL}/x402/tx/reading`, account, client,
         headers: ADMIN_TOKEN ? { Authorization: `Bearer ${ADMIN_TOKEN}`, 'X-Demo-Agent': 'agent' } : { 'X-Demo-Agent': 'agent' }
       });
-      const skupaj = performance.now() - T0;
+      const total = performance.now() - T0;
       if (r.status !== 200) throw new Error(`payment ${r.status}`);
       const body = await r.res.json();
       const reading = body.reading || {};
@@ -499,7 +499,7 @@ async function runX402Tx() {
       if (pv.status === 200 && pv.data) { block = pv.data.block ?? ''; gasUnits = pv.data.gasUnits ?? ''; gasPriceWei = pv.data.gasPriceWei ?? ''; }
       fs.appendFileSync(OUT, [
         `query_${i}`, nowIso(), MODE, 'x402-facilitated', 'facilitator', cfgX.network, cfgX.assetName, 'facilitator',
-        num(r.t.t402), num(r.t.tPodpis), num(r.t.tPoravnavaHttp), num(skupaj),
+        num(r.t.t402), num(r.t.tSign), num(r.t.tPaymentHttp), num(total),
         num(r.serverMs), num(downMs), num(r.verifyMs), num(r.settleMs),
         cfgX.priceAtomic, cfgX.assetDecimals, cumulativeAtomic.toString(), r.paymentId,
         r.replayed ? 'replay' : 'new',
@@ -507,7 +507,7 @@ async function runX402Tx() {
         block, gasUnits, gasPriceWei,
         reading.temperature_c ?? '', reading.humidity_pct ?? '', r.status
       ].join(',') + '\n');
-      console.log(`  ✓ ${String(i).padStart(3)} · total=${num(skupaj)} ms · merchant=${num(r.serverMs)} ms (of which facilitator=${num(downMs)} ms) · tx=${r.paymentResponse ? String(r.paymentResponse.txHash).slice(0, 18) + '…' : '—'}${r.synthetic ? ' (synthetic)' : ''}`);
+      console.log(`  ✓ ${String(i).padStart(3)} · total=${num(total)} ms · merchant=${num(r.serverMs)} ms (of which facilitator=${num(downMs)} ms) · tx=${r.paymentResponse ? String(r.paymentResponse.txHash).slice(0, 18) + '…' : '—'}${r.synthetic ? ' (synthetic)' : ''}`);
       ok++;
     } catch (e) { console.error(`  ✗ ${i}: ${e.message}`); }
     if (PAUSE_MS) await sleep(PAUSE_MS);
@@ -521,9 +521,9 @@ async function runX402Tx() {
 
 async function runX402Security() {
   const c = await merchant.get('/x402/config');
-  if (c.status === 401) return napakaPrijave();
-  const posrednikMock = !!(c.data && ((c.data.posrednikX402 && c.data.posrednikX402.mock) || c.data.mock));
-  if (c.status !== 200 || c.data.mode === 'off' || !posrednikMock) {
+  if (c.status === 401) return loginError();
+  const facilitatorMock = !!(c.data && ((c.data.facilitatorX402 && c.data.facilitatorX402.mock) || c.data.mock));
+  if (c.status !== 200 || c.data.mode === 'off' || !facilitatorMock) {
     console.error('❌ The tests require: merchant X402_MODE=facilitated + facilitator X402_MODE=self X402_MOCK=true.'); process.exit(1);
   }
   const cfgX = c.data;
@@ -533,7 +533,7 @@ async function runX402Security() {
   const url = `${MERCHANT_URL}/x402/tx/reading`;
   banner('x402 SECURITY TESTS (folder 04 — facilitated topology)');
   const results = [];
-  const rec = (ime, prc, dej, ok, op = '') => { results.push({ ime, prc, dej, ok, op }); console.log(`  ${ok ? '✓' : '✗'} ${ime.padEnd(50)} expected=${String(prc).padEnd(12)} actual=${String(dej).padEnd(10)} ${op}`); };
+  const rec = (name, expected, actual, ok, note = '') => { results.push({ name, expected, actual, ok, note }); console.log(`  ${ok ? '✓' : '✗'} ${name.padEnd(50)} expected=${String(expected).padEnd(12)} actual=${String(actual).padEnd(10)} ${note}`); };
 
   { // topological invariant: the merchant has no chain in x402 mode either
     const h = await merchant.get('/health');
@@ -550,20 +550,20 @@ async function runX402Security() {
   }
   { const r = await axios.get(url, { validateStatus: () => true }); rec('T4 without login → 401 (authentication ≠ payment)', 401, r.status, r.status === 401); }
   { const r = await merchant.get('/x402/tx/reading'); rec('T5 with login, without payment → 402 + PAYMENT-REQUIRED', 402, r.status, r.status === 402 && !!r.headers['payment-required']); }
-  let prvi;
-  { prvi = await x402o.payFlow({ url, account, client, headers: H }); rec('T6 valid payment via the facilitator → 200', 200, prvi.status, prvi.status === 200); }
+  let first;
+  { first = await x402o.payFlow({ url, account, client, headers: H }); rec('T6 valid payment via the facilitator → 200', 200, first.status, first.status === 200); }
   { // the client did NOT submit a transaction; the facilitator submitted the settlement
-    const pv = await merchant.get(`/x402/payment/${prvi.paymentId}`);
+    const pv = await merchant.get(`/x402/payment/${first.paymentId}`);
     const okTx = pv.status === 200 && pv.data && pv.data.facilitator && pv.data.facilitator.status && ['SETTLED', 'SETTLED_UNVERIFIED'].includes(pv.data.facilitator.status);
     rec('T7 the FACILITATOR performs the settlement (its own record)', 'SETTLED', pv.data && pv.data.facilitator ? pv.data.facilitator.status : pv.status, okTx);
   }
   { // repeat → replay at the merchant, the facilitator does not settle a second time
-    const r = await x402o.payFlow({ url, account, client, headers: H, reuseHeaders: prvi.signedHeaders, paymentId: prvi.paymentId });
-    rec('T8 repeat → replay, same settlement', 'replay', r.replayed ? 'replay' : r.status, r.status === 200 && r.replayed && r.paymentResponse && r.paymentResponse.txHash === prvi.paymentResponse.txHash);
+    const r = await x402o.payFlow({ url, account, client, headers: H, reuseHeaders: first.signedHeaders, paymentId: first.paymentId });
+    rec('T8 repeat → replay, same settlement', 'replay', r.replayed ? 'replay' : r.status, r.status === 200 && r.replayed && r.paymentResponse && r.paymentResponse.txHash === first.paymentResponse.txHash);
   }
   { // corrupted signature → 402
     const r = await x402o.payFlow({ url, account, client, headers: H, mutateAuthorization: (a) => { a.value = '1'; } });
-    rec('T9 corrupted authorisation → 402', 402, r.status, r.status === 402);
+    rec('T9 corrupted authorization → 402', 402, r.status, r.status === 402);
   }
   { // concurrent duplicates → one settlement
     const sig = await x402o.payFlow({ url, account, client, headers: H });
@@ -580,10 +580,10 @@ async function runX402Security() {
 
   const okAll = results.filter((x) => x.ok).length;
   banner(`RESULT · ${okAll}/${results.length} passed`);
-  const csvOut = path.join(__dirname, '..', 'measurements', 'x402_facilitator_varnost.csv');
+  const csvOut = path.join(__dirname, '..', 'measurements', 'x402_facilitator_security.csv');
   fs.mkdirSync(path.dirname(csvOut), { recursive: true });
   fs.writeFileSync(csvOut, 'test,expected,actual,passed,note\n' +
-    results.map((x) => [JSON.stringify(x.ime), x.prc, x.dej, x.ok ? 1 : 0, JSON.stringify(x.op)].join(',')).join('\n') + '\n');
+    results.map((x) => [JSON.stringify(x.name), x.expected, x.actual, x.ok ? 1 : 0, JSON.stringify(x.note)].join(',')).join('\n') + '\n');
   console.log(`  CSV: ${path.relative(process.cwd(), csvOut)}`);
   if (okAll !== results.length) process.exitCode = 1;
 }
@@ -594,7 +594,7 @@ async function runX402Security() {
     if (X402 && SECURITY) await runX402Security();
     else if (X402) await runX402Tx();
     else if (SECURITY) await runSecurity();
-    else if (TOK === 'metered') await runMetered();
+    else if (FLOW === 'metered') await runMetered();
     else await runTx();
   } catch (e) {
     console.error(`\n❌ ${e.message}`);

@@ -7,7 +7,7 @@ on:
 
 jobs:
   demo:
-    name: Demo web environment (402 -> 200)
+    name: Demo web environment (402 → 200)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -118,7 +118,7 @@ jobs:
           done
           echo "Server failed to start"; cat server.log; exit 1
 
-      - name: Merilni client (mock)
+      - name: Measurement client (mock)
         working-directory: test-environments/01_one_time_payments/client
         run: |
           npm ci

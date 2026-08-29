@@ -56,7 +56,7 @@ const MOCK_VERIFY = process.env.MOCK_VERIFY === 'true' && (!IS_PROD || process.e
 const MIN_CONFIRMATIONS = parseInt(process.env.MIN_CONFIRMATIONS || '1', 10);
 
 // Metered pricing. Default: per-reading value equals folder 02 (1e11 wei) so the
-// two folders differ ONLY in settlement cost — a clean amortization comparison.
+// two folders differ ONLY in settlement cost — a clean amortisation comparison.
 const PRICE_WEI_PER_CALL = BigInt(process.env.PRICE_WEI_PER_CALL || '100000000000');
 const PRICE_WEI_PER_BYTE = BigInt(process.env.PRICE_WEI_PER_BYTE || '0');
 const MIN_PRICE_WEI = BigInt(process.env.MIN_PRICE_WEI || '100000000000');
@@ -168,7 +168,7 @@ app.post('/session/open', openLimiter, async (req, res) => {
 
   let verification, chainReadMs = 0;
   if (MOCK_VERIFY) {
-    // In mock the deposit defaults to ~25 default-priced readings; a test may
+    // In mock mode the deposit defaults to the price of ~25 readings; a test may
     // request a specific mock deposit (to demonstrate insufficient-balance).
     const mockDeposit = mockDepositWei ? BigInt(mockDepositWei).toString() : (PRICE_WEI_PER_CALL * 25n).toString();
     verification = { verified: true, tx: { hash: txHash, from: ethers.getAddress(payerAddress), to: DEVICE_WALLET, value: mockDeposit, blockNumber: 0, gasUsed: '21000', status: 1 } };
@@ -348,7 +348,7 @@ if (x402.enabled) {
     const ttl = Math.min(parsed.data.ttlSeconds || SESSION_TTL_DEFAULT, SESSION_TTL_MAX);
     let budget = parsed.data.budgetAtomic ? BigInt(parsed.data.budgetAtomic) : DEPOSIT_ATOMIC;
     if (budget > DEPOSIT_ATOMIC) budget = DEPOSIT_ATOMIC; // budget may not exceed the deposit
-    const sessionId = `xseja_${uuidv4()}`;
+    const sessionId = `xsess_${uuidv4()}`;
     const expiresAt = Date.now() + ttl * 1000;
     // the session is CREATED only in onSettled (after a successful settlement) — here just the plan
     req.x402Plan = { sessionId, depositAtomic: DEPOSIT_ATOMIC.toString(), budgetAtomic: budget.toString(), expiresAt, paymentId: req.x402PaymentKey || null };
@@ -381,7 +381,7 @@ if (x402.enabled) {
 
   // GET /x402/reading-metered — LOCAL debit against an x402-funded session.
   // SAME logical algorithm as /reading-metered (nonce → signature → session →
-  // maximum → credit → budget → atomic write-off), but the units are ATOMIC
+  // maximum → credit → budget → atomic deduction), but the units are ATOMIC
   // token units; headers are named *-Atomic and NEVER *-Wei.
   app.get(RES_X402_METERED, limiter, (req, res) => {
     const payer = req.header('X-Payer');

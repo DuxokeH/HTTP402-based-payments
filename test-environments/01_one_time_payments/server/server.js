@@ -511,7 +511,7 @@ if (x402.enabled) {
       network: row.network, asset: row.asset, amountAtomic: row.amount_atomic,
       payer: row.payer, payTo: row.pay_to, txHash: row.tx_hash,
       block: row.block_number, gasUnits: row.gas_used, gasPriceWei: row.effective_gas_price,
-      poskusi: row.attempt, ustvarjeno: row.created_at, posodobljeno: row.updated_at
+      attempts: row.attempt, createdAt: row.created_at, updatedAt: row.updated_at
     });
   });
 

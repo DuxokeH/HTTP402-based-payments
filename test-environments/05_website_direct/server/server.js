@@ -7,7 +7,7 @@
  * ============================================================================
  *
  *  One Express app + one web UI with three tabs:
- *    1) Single payment     — human pays via MetaMask   → /single/*
+ *    1) One-time payment   — human pays via MetaMask   → /single/*
  *    2) Machine payments   — 20 on-chain tx (M2M)      → /tx/*   (+ SSE /run/tx)
  *    3) Metered session    — 1 top-up + N signed debits (M2M) → /metered/* (+ SSE /run/metered)
  *
@@ -233,7 +233,7 @@ app.get('/session', (req, res) => {
   res.setHeader('X-Server-Ms', sMs(req));
   res.json({
     success: true, session,
-    pravilo: 'sid is correlation only. A missing or changed sid (e.g. when the network/IP changes) does not cause a rejection. Identity = wallet + one-time tokens, not the IP address.'
+    policy: 'sid is correlation only. A missing or changed sid (e.g. when the network/IP changes) does not cause a rejection. Identity = wallet + one-time tokens, not the IP address.'
   });
 });
 
@@ -275,7 +275,7 @@ app.post('/single/service', (req, res) => {
   const prompt = (req.body && typeof req.body.prompt === 'string') ? req.body.prompt.slice(0, 4000) : 'hello';
   if (!db.consumeProof(proofToken)) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(409).json({ error: 'The token was consumed concurrently' }); }
   res.setHeader('X-Server-Ms', sMs(req));
-  res.json({ success: true, response: `Response of the protected service. Your prompt: "${prompt}". (demo mode)`, model: 'demo', payment: { txHash: proof.tx_hash, blockNumber: proof.block_number } });
+  res.json({ success: true, response: `Protected service response. Your prompt: "${prompt}". (demo mode)`, model: 'demo', payment: { txHash: proof.tx_hash, blockNumber: proof.block_number } });
 });
 
 app.post('/single/verify', async (req, res, next) => {
@@ -431,8 +431,8 @@ app.get('/metered/reading-metered', (req, res) => {
 });
 
 // ══════════ x402 v2 (PARALLEL MODE) — self-facilitated ══════════════════════
-// The three x402 flows mirror the three tabs: single payment, pay per
-// reading and the metered session (x402 ONLY for the top-up; the debits stay local
+// The three x402 flows mirror the three tabs: one-time payment, payment
+// per reading and the metered session (x402 ONLY for the top-up; the debits stay local
 // EIP-191 v2 signatures — NO on-chain settlements for the individual readings).
 // This server verifies and settles ITSELF (its own X402_RPC_URL) — in this folder
 // there is NO call to a facilitator, local or remote.
@@ -496,7 +496,7 @@ if (x402.enabled) {
     res.setHeader('X-Server-Ms', sMs(req));
     res.json({
       success: true,
-      response: 'Response of the protected service (x402, self-facilitated). The merchant verified and settled the payment itself.',
+      response: 'Protected service response (x402, self-facilitated). The merchant verified and settled the payment itself.',
       payment: { protocol: 'x402-self', scheme: 'exact', network: x402.config.network, asset: x402.config.assetName, txHash: pr ? pr.txHash : null, gasPayer: 'server' }
     });
   }));
@@ -523,7 +523,7 @@ if (x402.enabled) {
     const ttl = Math.min(parsed.data.ttlSeconds || SESSION_TTL_DEFAULT, SESSION_TTL_MAX);
     let budget = parsed.data.budgetAtomic ? BigInt(parsed.data.budgetAtomic) : DEPOSIT_ATOMIC;
     if (budget > DEPOSIT_ATOMIC) budget = DEPOSIT_ATOMIC;
-    const sessionId = `xseja_${uuidv4()}`;
+    const sessionId = `xsess_${uuidv4()}`;
     const expiresAt = Date.now() + ttl * 1000;
     req.x402Plan = { sessionId, depositAtomic: DEPOSIT_ATOMIC.toString(), budgetAtomic: budget.toString(), expiresAt, paymentId: req.x402PaymentKey || null };
     linkSid(req, 'x402_metered_session', sessionId);

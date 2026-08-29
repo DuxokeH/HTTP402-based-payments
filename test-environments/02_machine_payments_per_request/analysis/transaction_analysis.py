@@ -59,19 +59,19 @@ def main():
     print(f"Source: {csv_path}  ·  mode={mode}  ·  n={len(df)}")
 
     N = df["query"].astype(int).values
-    modelirano = df["fee_eth"].notna().sum() == 0
-    if modelirano:
+    modelled = df["fee_eth"].notna().sum() == 0
+    if modelled:
         fee = args.gas_per_tx * args.gas_price_gwei / 1e9   # ETH/tx
         cum = np.cumsum(np.full(len(df), fee))
-        oznaka = t(f"modelled @ {args.gas_price_gwei:g} gwei", f"modelirano @ {args.gas_price_gwei:g} gwei")
+        label = t(f"modelled @ {args.gas_price_gwei:g} gwei", f"modelirano @ {args.gas_price_gwei:g} gwei")
     else:
         fee = float(df["fee_eth"].dropna().mean())
         cum = df["fee_eth"].fillna(fee).cumsum().values
-        oznaka = t("measured", "izmerjeno")
+        label = t("measured", "izmerjeno")
 
     # ── Figure 1: cumulative settlement cost ─────────────────────────────────
     fig, ax = plt.subplots(figsize=(8, 4.6))
-    ax.step(N, cum, where="post", color=ORANGE, linewidth=2.2, label=t(f"1 transaction / query ({oznaka})", f"1 transakcija / poizvedbo ({oznaka})"))
+    ax.step(N, cum, where="post", color=ORANGE, linewidth=2.2, label=t(f"1 transaction / query ({label})", f"1 transakcija / poizvedbo ({label})"))
     ax.scatter(N, cum, color=ORANGE, s=18, zorder=3)
     ax.set_xlabel(t("number of queries N", "število poizvedb N")); ax.set_ylabel(t("cumulative settlement cost [ETH]", "kumulativni strošek poravnave [ETH]"))
     ax.set_title(t("Machine payments: cumulative gas cost grows linearly with N", "Avtomatska plačila: kumulativni strošek gasa narašča linearno z N"))
@@ -81,7 +81,7 @@ def main():
                 arrowprops=dict(arrowstyle="->", color=MUTED))
     ax.legend(loc="upper left")
     clean_axes(ax)
-    if modelirano:
+    if modelled:
         ax.text(0.99, 0.02, t("cost MODELLED (CSV has no real gas values)", "strošek MODELIRAN (CSV brez pravega gasa)"), transform=ax.transAxes,
                 ha="right", va="bottom", fontsize=8, color=MUTED, style="italic")
     save(fig, os.path.join(args.out, "01_cumulative_gas.png"))
@@ -96,7 +96,7 @@ def main():
     ax.legend(); clean_axes(ax)
     save(fig, os.path.join(args.out, "02_query_latency.png"))
 
-    print(f"  Total transactions: {len(df)} · cumulative cost ≈ {cum[-1]:.8f} ETH ({oznaka})")
+    print(f"  Total transactions: {len(df)} · cumulative cost ≈ {cum[-1]:.8f} ETH ({label})")
     print("Done.")
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@
  *      with a SEPARATE Sepolia transaction every time.
  *
  *  This is the deliberately-expensive baseline: N readings ⇒ N on-chain
- *  transactions ⇒ the fixed gas fee is paid N times. Folder 03 amortizes it.
+ *  transactions ⇒ the fixed gas fee is paid N times. Folder 03 amortises it.
  *
  *  Endpoints:
  *    GET  /reading            -> 402 challenge  (no proof)
@@ -43,7 +43,7 @@ const { z } = require('zod');
 const db = require('./db');
 const authLib = require('./auth');
 // Official x402 v2 — PARALLEL payment mode (X402_MODE=off|self). With 'off' the
-// /x402/* routes are not mounted and the folder behaves byte-identically as before.
+// /x402/* routes are not mounted and the folder behaves byte-identically to before.
 const x402 = require('./x402');
 const dbx = x402.enabled ? require('./db_x402') : null;
 
@@ -260,7 +260,7 @@ if (x402.enabled) {
       network: row.network, asset: row.asset, amountAtomic: row.amount_atomic,
       payer: row.payer, payTo: row.pay_to, txHash: row.tx_hash,
       block: row.block_number, gasUnits: row.gas_used, gasPriceWei: row.effective_gas_price,
-      poskusi: row.attempt
+      attempts: row.attempt
     });
   });
 

@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * In-process M2M agent for the showcase site (folder 05_website_direct).
+ * In-process M2M agent for the showcase website (folder 05_website_direct).
  *
  * runTx      — the 20-transactions flow: one full on-chain pay-per-reading loop.
  * runMetered — the metered flow: one top-up opens a session, then N EIP-191
@@ -13,7 +13,7 @@
  *
  * mock === true  → no chain: transactions are faked and the server mock-verifies;
  *                  debits are signed by an ephemeral wallet (no funds needed).
- * mock === false → real Sepolia: needs payerPk (a funded consumer wallet).
+ * mock === false → real Sepolia: needs payerPk (a funded payer wallet).
  */
 
 const axios = require('axios');
@@ -116,32 +116,32 @@ async function runMetered(opts) {
   emit('session', { sessionId: session.sessionId, depositWei: session.depositWei, budgetWei: session.budgetWei, expiresAt: session.expiresAt, gasUsed, feeEth });
 
   // N signed debits (no chain)
-  const tPod = [], tZah = []; let ok = 0;
+  const tSignAll = [], tRequestAll = []; let ok = 0;
   for (let i = 1; i <= debits; i++) {
     if (!isAlive()) return;
     const nonce = mkNonce();
     let s = performance.now();
     const sig = await wallet.signMessage(debitMessage(wallet.address, session.sessionId, nonce, resource, maxWei));
-    const tPodpis = performance.now() - s;
+    const tSign = performance.now() - s;
     s = performance.now();
     const r = await http.get('/metered/reading-metered', { headers: { 'X-Payer': wallet.address, 'X-Session': session.sessionId, 'X-Nonce': nonce, 'X-Signature': sig, 'X-Max-Wei': maxWei } });
-    const tZahteva = performance.now() - s;
+    const tRequest = performance.now() - s;
     if (r.status !== 200) { emit('error', { i, message: `${r.status}: ${JSON.stringify(r.data)}` }); continue; }
-    ok++; tPod.push(tPodpis); tZah.push(tZahteva);
+    ok++; tSignAll.push(tSign); tRequestAll.push(tRequest);
     emit('debit', {
-      i, reading: r.data.reading, tSignMs: +tPodpis.toFixed(2), tRequestMs: +tZahteva.toFixed(2),
+      i, reading: r.data.reading, tSignMs: +tSign.toFixed(2), tRequestMs: +tRequest.toFixed(2),
       priceWei: r.headers['x-charged-wei'], creditWei: r.headers['x-balance-wei'], budgetRemainingWei: r.headers['x-budget-remaining-wei']
     });
   }
   const med = (a) => { a = a.slice().sort((x, y) => x - y); return a.length ? +a[Math.floor(a.length / 2)].toFixed(2) : null; };
   const fin = (await http.get(`/metered/session/${session.sessionId}`)).data.session;
-  emit('summary', { mode: mock ? 'mock' : 'real', succeeded: ok, onChainTransactions: 1, medSignMs: med(tPod), medRequestMs: med(tZah), finalCreditWei: fin.balanceWei, spentWei: fin.spentWei });
+  emit('summary', { mode: mock ? 'mock' : 'real', succeeded: ok, onChainTransactions: 1, medSignMs: med(tSignAll), medRequestMs: med(tRequestAll), finalCreditWei: fin.balanceWei, spentWei: fin.spentWei });
 }
 
 
 // ══════════ x402 v2 (PARALLEL MODE) — built-in M2M agents ════════════════════
 // The same idea as runTx/runMetered, but over the official x402 protocol: the client
-// signs an EIP-3009 authorisation (PAYMENT-SIGNATURE), while the server settles the
+// signs an EIP-3009 authorization (PAYMENT-SIGNATURE), while the server settles the
 // ETH on Ethereum Sepolia ITSELF (testnet — the settlement is synthetic/mock) and pays the gas.
 // The new SSE events (challenge, settlement,
 // idempotency) do not change the existing seven; in the metered flow every event
@@ -172,14 +172,14 @@ async function runX402Tx(opts) {
     const T0 = performance.now();
     try {
       const r = await o.payFlow({ url: `${baseURL}/x402/tx/reading`, account, client, headers: H });
-      const skupaj = performance.now() - T0;
+      const total = performance.now() - T0;
       if (r.status !== 200) { emit('error', { i, message: `payment ${r.status}` }); continue; }
       const body = await r.res.json();
       cumulativeAtomic += BigInt(opts.priceAtomic || '0');
       emit('challenge', { i, scheme: 'exact', network: opts.network, amountAtomic: opts.priceAtomic, paymentId: r.paymentId, tChallengeMs: r.t.t402 });
-      emit('settlement', { i, passed: true, txHash: r.paymentResponse ? r.paymentResponse.txHash : null, synthetic: r.synthetic, gasPayer: 'server', tSignMs: r.t.tPodpis, tPoravnavaMs: r.t.tPoravnavaHttp });
-      emit('idempotency', { i, paymentId: r.paymentId, outcome: r.replayed ? 'cached' : 'nov' });
-      emit('query', { i, ok: true, protocol: 'x402-self', tTotalMs: skupaj, reading: body.reading, txHash: r.paymentResponse ? r.paymentResponse.txHash : null, synthetic: r.synthetic, cumulativeAtomic: cumulativeAtomic.toString() });
+      emit('settlement', { i, passed: true, txHash: r.paymentResponse ? r.paymentResponse.txHash : null, synthetic: r.synthetic, gasPayer: 'server', tSignMs: r.t.tSign, tSettlementMs: r.t.tPaymentHttp });
+      emit('idempotency', { i, paymentId: r.paymentId, outcome: r.replayed ? 'cached' : 'new' });
+      emit('query', { i, ok: true, protocol: 'x402-self', tTotalMs: total, reading: body.reading, txHash: r.paymentResponse ? r.paymentResponse.txHash : null, synthetic: r.synthetic, cumulativeAtomic: cumulativeAtomic.toString() });
       ok++;
     } catch (e) { emit('error', { i, message: e.message }); }
   }
@@ -218,16 +218,16 @@ async function runX402Metered(opts) {
       const msg = `metered-debit-v2:${account.address.toLowerCase()}:${session.sessionId}:${nonce}:${resPath}:${maxAtomic}:${network}:${assetAddr.toLowerCase()}`;
       const t0 = performance.now();
       const signature = await account.signMessage({ message: msg });
-      const tPodpis = performance.now() - t0;
+      const tSign = performance.now() - t0;
       const t1 = performance.now();
       const r = await fetch(`${baseURL}${resPath}`, { headers: { ...H, 'X-Payer': account.address, 'X-Session': session.sessionId, 'X-Nonce': nonce, 'X-Signature': signature, 'X-Max-Atomic': maxAtomic } });
-      const tZahteva = performance.now() - t1;
+      const tRequest = performance.now() - t1;
       if (r.status !== 200) { emit('error', { i, message: `debit ${r.status}` }); continue; }
       const body = await r.json();
       emit('debit', { i, chain: false, protocol: 'x402-self', reading: body.reading,
         chargedAtomic: r.headers.get('X-Charged-Atomic'), balanceAtomic: r.headers.get('X-Balance-Atomic'),
         budgetRemainingAtomic: r.headers.get('X-Budget-Remaining-Atomic'),
-        tSignMs: tPodpis, tRequestMs: tZahteva });
+        tSignMs: tSign, tRequestMs: tRequest });
       ok++;
     } catch (e) { emit('error', { i, message: e.message }); }
   }

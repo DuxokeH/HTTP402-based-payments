@@ -1,8 +1,8 @@
-# ─── Dependencies ──────────────────────────────────────────────────────────────
+# ─── Dependencies ────────────────────────────────────────────────────────────
 **/node_modules/
 
-# ─── Secrets — NEVER in git ───────────────────────────────────────────────
-# Denarnice si vsak username ustvari sam (glej README.md).
+# ─── Secrets — NEVER in git ──────────────────────────────────────────────────
+# Each user creates their own wallets (see README.md).
 **/wallet.json
 *.wallet.json
 **/.env
@@ -13,7 +13,7 @@
 *.pem
 **/admin-credentials.txt
 
-# ─── Databases (SQLite) ────────────────────────────────────────────────
+# ─── Databases (SQLite) ──────────────────────────────────────────────────────
 **/data/
 *.db
 *.db-wal
@@ -26,7 +26,7 @@
 __pycache__/
 *.pyc
 
-# ─── Measurement results (generated at run time, not part of the repo) ──────────
+# ─── Measurement results (generated at run time, not part of the repo) ───────
 **/measurements/*.csv
 **/measurements/*.json
 **/analysis/figures/
@@ -34,7 +34,7 @@ __pycache__/
 *.pcapng
 *.pcap
 
-# ─── Build artefacts ────────────────────────────────────────────────────────
+# ─── Build artefacts ─────────────────────────────────────────────────────────
 dist/
 build/
 
@@ -42,7 +42,7 @@ build/
 **/caddy_data/
 **/caddy_config/
 
-# ─── Tools and editors ──────────────────────────────────────────────────
+# ─── Tools and editors ───────────────────────────────────────────────────────
 .serena/
 .claude/
 .idea/

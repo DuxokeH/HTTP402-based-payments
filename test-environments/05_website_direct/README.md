@@ -57,22 +57,22 @@ of a session across a network switch, and a Wireshark capture of the messages ov
 ## Folder structure
 
 ```
-server/                      the only component — a single Node process (port 8080)
-  server.js                    combined server (all three flows + SSE + session cookie + static page)
+server/                        the only component — a single Node process (port 8080)
+  server.js                    merged server (all three flows + SSE + session cookie + static page)
   runner.js                    built-in M2M agent (real HTTP over loopback + SSE events)
   auth.js                      admin login (password + machine token + CSRF protection) — see ../README.md
   db.js                        SQLite for all three classic flows (+ browser session correlation)
   x402.js                      x402 v2 — self-facilitated verification and settlement
   db_x402.js                   separate SQLite database for x402 payments and sessions
-  x402-client.js            x402 payer for the built-in agent (server side)
+  x402-client.js               x402 payer for the built-in agent (server side)
   public/
     index.html                 three tabs, each with two cards (classic + x402)
     app.js                     classic cards (MetaMask via viem from esm.sh) + SSE + session view
-    x402-ui.js                 x402 cards (requires `window.X402Client`)
-    x402-browser.js             BUILT browser bundle (esbuild output, do not edit)
+    x402-ui.js                 x402 cards (requires `window.X402Klient`)
+    x402-browser.js            BUILT browser bundle (esbuild output, do not edit)
     styles.css
   src/
-    x402-browser.src.js         the source esbuild builds public/x402-browser.js from
+    x402-browser.src.js        the source esbuild builds public/x402-browser.js from
   package.json  package-lock.json  .env.example  wallet.example.json
   Dockerfile  docker-compose.yml  Caddyfile  .dockerignore
 ```
@@ -262,7 +262,7 @@ requires a login. The server **creates the credentials itself on first start** a
 into a file with 0600 permissions on **every** start:
 
 ```bash
-grep GESLO data/admin-credentials.txt      # for logging in via the browser
+grep PASSWORD data/admin-credentials.txt   # for logging in via the browser
 grep TOKEN data/admin-credentials.txt      # machine token (Authorization: Bearer)
 ```
 
@@ -348,7 +348,7 @@ The root `.gitignore` excludes all of this.
 - `curl -fsS http://localhost:8080/health` returns a 200 response (without a login);
 - after logging in, the browser shows the page with three tabs;
 - tab 2 prints one line per query live and finishes with an `end` event;
-- tab 3, classic card: the line `Seja odprta (1 on-chain transakcija)` and then one line per debit
+- tab 3, classic card: the line `Session opened (1 on-chain transaction)` and then one line per debit
   with a decreasing `credit=… wei`;
 - tab 3, x402 card (only with `X402_MODE=self`): the line `⛓ ON-CHAIN TOP-UP` and then N
   `✎ OFF-CHAIN debit …` lines with a decreasing remainder (the log prints the newest entries at

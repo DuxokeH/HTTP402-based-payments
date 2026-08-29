@@ -40,11 +40,11 @@ def main():
 
     # Phase labels are built here (not at module level) so that t() runs after
     # set_language() and honours the --sl flag.
-    FAZE = [("t_challenge_ms", t("402 challenge", "Izziv 402")),
-            ("t_submit_ms", t("Tx submission", "Oddaja tx")),
-            ("t_confirm_ms", t("Block confirmation", "Potrditev bloka")),
-            ("t_verify_ms", t("Verification", "Preverjanje")),
-            ("t_access_ms", t("Access", "Dostop"))]
+    PHASES = [("t_challenge_ms", t("402 challenge", "Izziv 402")),
+              ("t_submit_ms", t("Tx submission", "Oddaja tx")),
+              ("t_confirm_ms", t("Block confirmation", "Potrditev bloka")),
+              ("t_verify_ms", t("Verification", "Preverjanje")),
+              ("t_access_ms", t("Access", "Dostop"))]
 
     csv_path = args.csv or find_csv()
     if not csv_path or not os.path.exists(csv_path):
@@ -53,7 +53,7 @@ def main():
 
     df = pd.read_csv(csv_path)
     mode = str(df["mode"].iloc[0]) if "mode" in df and len(df) else "?"
-    for c, _ in FAZE:
+    for c, _ in PHASES:
         df[c] = pd.to_numeric(df.get(c), errors="coerce")
     df["t_total_ms"] = pd.to_numeric(df.get("t_total_ms"), errors="coerce")
     set_style()
@@ -62,23 +62,23 @@ def main():
     print(f"Source: {csv_path}  ·  mode={mode}  ·  n={len(df)}")
 
     # phases that have data (>0)
-    aktivne = [(c, l) for c, l in FAZE if df[c].notna().any() and df[c].fillna(0).sum() > 0]
+    active = [(c, l) for c, l in PHASES if df[c].notna().any() and df[c].fillna(0).sum() > 0]
 
     # ── Figure 1: boxplot by phase ───────────────────────────────────────────
     fig, ax = plt.subplots(figsize=(8, 4.6))
-    podatki = [df[c].dropna().values for c, _ in aktivne]
-    oznake = [l for _, l in aktivne]
+    data = [df[c].dropna().values for c, _ in active]
+    labels = [l for _, l in active]
     # Set the tick labels separately: the parameter was renamed in matplotlib
     # (labels -> tick_labels in 3.9), while set_xticklabels works in all versions.
-    bp = ax.boxplot(podatki, patch_artist=True, widths=0.55,
+    bp = ax.boxplot(data, patch_artist=True, widths=0.55,
                     medianprops=dict(color=INK2, linewidth=1.6),
                     flierprops=dict(marker="o", markersize=3, markerfacecolor=MUTED, markeredgecolor="none", alpha=0.5))
-    ax.set_xticklabels(oznake)
+    ax.set_xticklabels(labels)
     for patch in bp["boxes"]:
         patch.set(facecolor=BLUE, alpha=0.75, edgecolor=BLUE)
     for w in bp["whiskers"]: w.set(color=MUTED)
     for cpp in bp["caps"]: cpp.set(color=MUTED)
-    span = df[[c for c, _ in aktivne]].max().max() / max(1e-9, df[[c for c, _ in aktivne]].replace(0, np.nan).min().min())
+    span = df[[c for c, _ in active]].max().max() / max(1e-9, df[[c for c, _ in active]].replace(0, np.nan).min().min())
     if span > 50:
         ax.set_yscale("log"); ax.set_ylabel(t("time [ms] (log scale)", "čas [ms] (logaritemska skala)"))
     else:
@@ -89,15 +89,15 @@ def main():
     save(fig, os.path.join(args.out, "01_latency_boxplot.png"))
 
     # ── Figure 2: median breakdown of the full flow (stacked bar) ────────────
-    med = [float(df[c].median(skipna=True)) if df[c].notna().any() else 0.0 for c, _ in aktivne]
-    barve = [BLUE, ORANGE, AQUA, "#eda100", "#4a3aa7"][:len(aktivne)]
+    med = [float(df[c].median(skipna=True)) if df[c].notna().any() else 0.0 for c, _ in active]
+    colors = [BLUE, ORANGE, AQUA, "#eda100", "#4a3aa7"][:len(active)]
     fig, ax = plt.subplots(figsize=(7.6, 2.4))
-    levo = 0.0
-    for v, (c, l), col in zip(med, aktivne, barve):
-        ax.barh(0, v, left=levo, color=col, edgecolor="white", height=0.6, label=f"{l}")
+    left = 0.0
+    for v, (c, l), col in zip(med, active, colors):
+        ax.barh(0, v, left=left, color=col, edgecolor="white", height=0.6, label=f"{l}")
         if v / max(sum(med), 1e-9) > 0.03:
-            ax.text(levo + v / 2, 0, f"{l}\n{v:.0f} ms", ha="center", va="center", color="white", fontsize=8.5, fontweight="bold")
-        levo += v
+            ax.text(left + v / 2, 0, f"{l}\n{v:.0f} ms", ha="center", va="center", color="white", fontsize=8.5, fontweight="bold")
+        left += v
     ax.set_xlim(0, sum(med) * 1.02); ax.set_yticks([])
     ax.set_xlabel(t("time [ms]", "čas [ms]"))
     ax.set_title(t(f"Median phase breakdown of the one-time flow  (total ≈ {sum(med):.0f} ms)",
@@ -107,14 +107,14 @@ def main():
 
     # ── summary table ────────────────────────────────────────────────────────
     total_label = t("TOTAL", "SKUPAJ")
-    vrstice = []
-    for c, l in aktivne + [("t_total_ms", total_label)]:
+    rows = []
+    for c, l in active + [("t_total_ms", total_label)]:
         s = pd.to_numeric(df[c], errors="coerce").dropna()
         if len(s):
-            vrstice.append([l, len(s), f"{s.min():.2f}", f"{s.median():.2f}", f"{s.mean():.2f}",
-                            f"{s.quantile(0.95):.2f}", f"{s.max():.2f}"])
+            rows.append([l, len(s), f"{s.min():.2f}", f"{s.median():.2f}", f"{s.mean():.2f}",
+                         f"{s.quantile(0.95):.2f}", f"{s.max():.2f}"])
     # CSV column headers stay plain English so the CSV output does not vary by language.
-    tab = pd.DataFrame(vrstice, columns=["phase", "n", "min", "median", "mean", "p95", "max"])
+    tab = pd.DataFrame(rows, columns=["phase", "n", "min", "median", "mean", "p95", "max"])
     csv_out = os.path.join(args.out, "latency_summary.csv")
     os.makedirs(args.out, exist_ok=True); tab.to_csv(csv_out, index=False)
     print(f"  ✓ table: {csv_out}")

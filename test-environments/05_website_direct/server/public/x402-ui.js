@@ -56,11 +56,11 @@ if ($('x-pay')) $('x-pay').onclick = async () => {
   try {
     const r = await window.X402Client.payFlow({ url: '/x402/single/service', client });
     $('x-t1').textContent = r.t.t402.toFixed(1) + ' ms';
-    $('x-t2').textContent = (r.t.tPodpis || 0).toFixed(1) + ' ms';
+    $('x-t2').textContent = (r.t.tSign || 0).toFixed(1) + ' ms';
     $('x-t3').textContent = (r.t.tPayment || 0).toFixed(1) + ' ms';
     $('x-timing').classList.remove('hidden');
     const body = await r.res.json();
-    $('x-result').textContent = JSON.stringify({ status: r.status, txHash: r.txHash, synthetic: r.synthetic, odgovor: body }, null, 2);
+    $('x-result').textContent = JSON.stringify({ status: r.status, txHash: r.txHash, synthetic: r.synthetic, response: body }, null, 2);
     $('x-result').classList.remove('hidden');
   } catch (e) { $('x-err').textContent = e.message; $('x-err').classList.remove('hidden'); }
 };

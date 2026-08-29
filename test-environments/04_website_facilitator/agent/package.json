@@ -1,7 +1,7 @@
 {
   "name": "x402-facilitator-agent",
   "version": "1.0.0",
-  "description": "Merilni agent za posredniško vejo (plačilo na odčitek, merjena session, varnostni testi)",
+  "description": "Measurement agent for the facilitator branch (payment per reading, metered session, security tests)",
   "main": "agent.js",
   "type": "commonjs",
   "scripts": {

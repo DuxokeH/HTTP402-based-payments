@@ -36,7 +36,7 @@ async function init() {
   $('e-merchant').textContent = CFG.receiver;
   $('e-price').textContent = `${ec.priceEth} ETH (≈ ${ec.priceEurApprox} €)`;
   if (CFG.mockVerify) addDemoButton();
-  refreshSeja();
+  refreshSession();
 }
 
 // ── browser session (sid): correlation, not authorisation ────────────────────
@@ -44,8 +44,8 @@ async function init() {
 // into the same session. If you switch networks mid-flow (a different IP), the
 // "IP changes" counter goes up while the flow carries on — access is not tied
 // to the IP.
-const KIND_SL = { request_id: 'payment request (402)', proof_token: 'proof token', metered_session: 'metered session' };
-async function refreshSeja() {
+const KIND_LABELS = { request_id: 'payment request (402)', proof_token: 'proof token', metered_session: 'metered session' };
+async function refreshSession() {
   try {
     const r = await fetch('/session', { cache: 'no-store' });
     const { session } = await r.json();
@@ -62,12 +62,12 @@ async function refreshSeja() {
     $('i-exp').textContent = new Date(session.expiresAt).toLocaleString('en-GB');
     box.innerHTML = '';
     if (!session.links.length) logLine(box, 'muted', 'No linked events yet — start one of the flows.');
-    for (const l of session.links) logLine(box, '', `${new Date(l.at).toLocaleTimeString('en-GB')} · ${KIND_SL[l.kind] || l.kind} · ${l.ref}`);
+    for (const l of session.links) logLine(box, '', `${new Date(l.at).toLocaleTimeString('en-GB')} · ${KIND_LABELS[l.kind] || l.kind} · ${l.ref}`);
   } catch (err) {
     $('i-hint').textContent = `Could not read the session: ${err.message}`;
   }
 }
-$('i-refresh').addEventListener('click', refreshSeja);
+$('i-refresh').addEventListener('click', refreshSession);
 
 // ── logout ───────────────────────────────────────────────────────────────────
 $('logout').addEventListener('click', async () => {
@@ -97,17 +97,17 @@ $('e-connect').addEventListener('click', async () => {
   } catch (err) { eErr(`Wallet error: ${err.message}`); }
 });
 
-$('e-pay').addEventListener('click', () => payEnkratno(false));
+$('e-pay').addEventListener('click', () => payOneTime(false));
 
 function addDemoButton() {
   if ($('e-demo')) return;
   const b = document.createElement('button');
   b.id = 'e-demo'; b.className = 'ghost'; b.textContent = 'Demo (mock, no MetaMask)';
-  b.addEventListener('click', () => payEnkratno(true));
+  b.addEventListener('click', () => payOneTime(true));
   $('e-pay').insertAdjacentElement('afterend', b);
 }
 
-async function payEnkratno(demo) {
+async function payOneTime(demo) {
   show($('e-err'), false); show($('e-result'), false);
   const prompt = $('e-prompt').value.trim() || 'hello';
   show($('e-steps'), true); show($('e-timing'), true);
@@ -124,7 +124,7 @@ async function payEnkratno(demo) {
     const chal = await fetch(`/single/service?payer=${payer}`, { headers: { 'X-Payer': payer } });
     if (chal.status !== 402) throw new Error(`Expected 402, got ${chal.status}`);
     const { payment } = await chal.json();
-    T.izziv = now() - s; $('e-t1').textContent = ms(T.izziv); setStep('e-s1', 'done');
+    T.challenge = now() - s; $('e-t1').textContent = ms(T.challenge); setStep('e-s1', 'done');
 
     // 2 — pay
     setStep('e-s2', 'active');
@@ -134,7 +134,7 @@ async function payEnkratno(demo) {
     else {
       txHash = await walletClient.sendTransaction({ account, to: getAddress(payment.to), value: parseEther(payment.amount) });
       await publicClient.waitForTransactionReceipt({ hash: txHash });
-      T.potrditev = now() - s; $('e-t2').textContent = ms(T.potrditev);
+      T.confirm = now() - s; $('e-t2').textContent = ms(T.confirm);
     }
     setStep('e-s2', 'done');
 
@@ -146,13 +146,13 @@ async function payEnkratno(demo) {
     s = now();
     const fUrl = (payment.facilitatorUrl || '').replace(/\/+$/, '');
     const submitPath = payment.submitPath || '/submit-payment';
-    if (!fUrl) { setStep('e-s3', 'fail'); throw new Error('The 402 response does not contain the facilitator address (facilitatorUrl)'); }
+    if (!fUrl) { setStep('e-s3', 'fail'); throw new Error('The 402 response does not contain the facilitator URL (facilitatorUrl)'); }
     const vr = await fetch(`${fUrl}${submitPath}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestId: payment.requestId, txHash, network: payment.network, payerAddress: payer }) });
     const vj = await vr.json();
     if (!vr.ok) { setStep('e-s3', 'fail'); throw new Error(vj.message || vj.error || 'The facilitator did not confirm the payment'); }
     const proofToken = vj.proofToken || (vj.proof && vj.proof.token);
     if (!proofToken) { setStep('e-s3', 'fail'); throw new Error('The facilitator did not return a proof token'); }
-    T.preverjanje = now() - s; $('e-t3').textContent = ms(T.preverjanje); setStep('e-s3', 'done');
+    T.verify = now() - s; $('e-t3').textContent = ms(T.verify); setStep('e-s3', 'done');
 
     // 4 — access (the merchant redeems the token with the facilitator, M→F)
     setStep('e-s4', 'active');
@@ -160,11 +160,11 @@ async function payEnkratno(demo) {
     const ar = await fetch('/single/service', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Payment': proofToken }, body: JSON.stringify({ prompt }) });
     const aj = await ar.json();
     if (!ar.ok) { setStep('e-s4', 'fail'); throw new Error(aj.message || aj.error || 'Access failed'); }
-    T.dostop = now() - s; $('e-t4').textContent = ms(T.dostop); setStep('e-s4', 'done');
-    T.skupaj = now() - T0; $('e-t5').innerHTML = `<strong>${ms(T.skupaj)}</strong>`;
+    T.access = now() - s; $('e-t4').textContent = ms(T.access); setStep('e-s4', 'done');
+    T.total = now() - T0; $('e-t5').innerHTML = `<strong>${ms(T.total)}</strong>`;
     $('e-result').textContent = aj.response; show($('e-result'), true);
   } catch (err) { eErr(err.message || String(err)); }
-  finally { refreshSeja(); }
+  finally { refreshSession(); }
 }
 
 // ════════════════════════════ 2) TX (SSE) ═══════════════════════════════════
@@ -183,7 +183,7 @@ async function runToken() {
 
 // EventSource does not report the status code — on an error we check whether an
 // expired session is to blame, so the user is not left without an explanation.
-async function sseNapaka(box) {
+async function sseError(box) {
   try {
     const r = await fetch('/session', { cache: 'no-store' });
     if (r.status === 401) { logLine(box, 'fail', 'The session has expired — redirecting to the login page…'); setTimeout(() => { location.href = '/login'; }, 1200); return; }
@@ -210,9 +210,9 @@ $('tx-run').addEventListener('click', async () => {
   txES.addEventListener('summary', (e) => { const d = JSON.parse(e.data); logLine($('tx-log'), 'ok', `Summary · ${d.succeeded} successful · on-chain transactions: ${d.onChainTransactions}${d.cumulativeFeeEth ? ` · total gas ${d.cumulativeFeeEth} ETH` : ''}`); });
   txES.addEventListener('error', (e) => { const d = JSON.parse(e.data); logLine($('tx-log'), 'fail', `Error${d.i ? ` #${d.i}` : ''}: ${d.message}`); });
   txES.addEventListener('end', () => stopTx());
-  txES.onerror = () => { sseNapaka($('tx-log')); stopTx(); };
+  txES.onerror = () => { sseError($('tx-log')); stopTx(); };
 });
-function stopTx() { if (txES) { txES.close(); txES = null; } $('tx-run').disabled = false; $('tx-stop').disabled = true; refreshSeja(); }
+function stopTx() { if (txES) { txES.close(); txES = null; } $('tx-run').disabled = false; $('tx-stop').disabled = true; refreshSession(); }
 $('tx-stop').addEventListener('click', stopTx);
 
 // ════════════════════════════ 3) METERED (SSE) ══════════════════════════════
@@ -244,9 +244,9 @@ $('m-run').addEventListener('click', async () => {
   mES.addEventListener('summary', (e) => { const d = JSON.parse(e.data); $('m-lat').textContent = d.medSignMs != null ? (d.medSignMs + d.medRequestMs).toFixed(2) : median(mLat); logLine($('m-log'), 'ok', `Summary · ${d.succeeded} debits · on-chain transactions: ${d.onChainTransactions} · final credit ${d.finalCreditWei} wei`); });
   mES.addEventListener('error', (e) => { const d = JSON.parse(e.data); logLine($('m-log'), 'fail', `Error${d.i ? ` #${d.i}` : ''}: ${d.message}`); });
   mES.addEventListener('end', () => stopM());
-  mES.onerror = () => { sseNapaka($('m-log')); stopM(); };
+  mES.onerror = () => { sseError($('m-log')); stopM(); };
 });
-function stopM() { if (mES) { mES.close(); mES = null; } $('m-run').disabled = false; $('m-stop').disabled = true; refreshSeja(); }
+function stopM() { if (mES) { mES.close(); mES = null; } $('m-run').disabled = false; $('m-stop').disabled = true; refreshSession(); }
 $('m-stop').addEventListener('click', stopM);
 
 init().catch((e) => { $('mode-badge').textContent = `Error: ${e.message}`; });

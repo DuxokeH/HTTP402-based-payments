@@ -5,9 +5,9 @@ Comparison of the x402 branches against the existing custom branches — NEW
 figures; the existing analyses are left untouched.
 
 Reads the NEW files:
-  01/measurements/x402_enkratna_{mode}.csv      (x402-self, one-time)
-  02/measurements/x402_transakcije_{mode}.csv   (x402-self, per reading)
-  03/measurements/x402_dobroimetje_{mode}.csv   (x402-self top-up + local debits)
+  01/measurements/x402_one_time_{mode}.csv      (x402-self, one-time)
+  02/measurements/x402_transactions_{mode}.csv  (x402-self, per reading)
+  03/measurements/x402_credit_{mode}.csv        (x402-self top-up + local debits)
   04/measurements/x402_facilitator_tx_{mode}.csv  (x402-facilitated)
 and places them next to the existing ones (one_time_*, transactions_*, credit_*,
 facilitator_tx_*) whenever those exist.
@@ -62,29 +62,29 @@ def warning_text():
              "in plačnik gasa.")
 
 
-KOREN_ = ROOT
+ROOT_ = ROOT
 
 NETWORKS = {"eip155:11155111": "Ethereum Sepolia", "eip155:84532": "Base Sepolia"}
 
 
-def _zadnja(df, stolpec, privzeto=""):
+def _last(df, column, default_value=""):
     """Value of a column taken from the last row (the CSV is appended to — the last run wins)."""
-    if df is not None and stolpec in df.columns:
-        v = df[stolpec].dropna()
+    if df is not None and column in df.columns:
+        v = df[column].dropna()
         if len(v):
             return str(v.iloc[-1])
-    return privzeto
+    return default_value
 
 
-def branch_label(ime, df):
-    asset = _zadnja(df, "asset", "?")
-    network = NETWORKS.get(_zadnja(df, "network"), _zadnja(df, "network", "?"))
-    gas = _zadnja(df, "gas_payer", "?")
-    return f"{ime}\n({asset} · {network}\n· gas: {gas})"
+def branch_label(name, df):
+    asset = _last(df, "asset", "?")
+    network = NETWORKS.get(_last(df, "network"), _last(df, "network", "?"))
+    gas = _last(df, "gas_payer", "?")
+    return f"{name}\n({asset} · {network}\n· gas: {gas})"
 
 
 def find_file(path):
-    p = os.path.join(KOREN_, path)
+    p = os.path.join(ROOT_, path)
     if os.path.exists(p):
         try:
             df = pd.read_csv(p)
@@ -100,12 +100,12 @@ def stamp_warning(ax):
             va="bottom", fontsize=7, color=MUTED, style="italic", wrap=True)
 
 
-def check_synthetic(df, oznaka):
+def check_synthetic(df, label):
     if "synthetic_tx" in df.columns and df["synthetic_tx"].fillna(0).astype(int).any():
-        print(f"  ⚠ {oznaka}: contains SYNTHETIC settlements (mock, 0x6d6f636b…) — the figure gets a watermark.")
+        print(f"  ⚠ {label}: contains SYNTHETIC settlements (mock, 0x6d6f636b…) — the figure gets a watermark.")
         return True
     if "mode" in df.columns and (df["mode"] == "mock").any():
-        print(f"  ⚠ {oznaka}: contains mock rows — the figure gets a watermark.")
+        print(f"  ⚠ {label}: contains mock rows — the figure gets a watermark.")
         return True
     return False
 
@@ -127,24 +127,24 @@ def main():
 
     # ── 1) one-time: custom-direct vs x402-self (total time) ─────────────────
     cd, cdp = find_file(f"01_one_time_payments/measurements/one_time_{n}.csv")
-    xs, xsp = find_file(f"01_one_time_payments/measurements/x402_enkratna_{n}.csv")
+    xs, xsp = find_file(f"01_one_time_payments/measurements/x402_one_time_{n}.csv")
     if xs is not None:
-        vz = args.vzorec or check_synthetic(xs, "x402 one_time")
+        is_sample = args.sample or check_synthetic(xs, "x402 one_time")
         if cd is not None:
-            vz = vz or ("mode" in cd.columns and (cd["mode"] == "mock").any())
-        mark_sample(vz)
+            is_sample = is_sample or ("mode" in cd.columns and (cd["mode"] == "mock").any())
+        mark_sample(is_sample)
         fig, ax = new_figure()
-        skupine, oznake, barve = [], [], []
+        groups, labels, colors = [], [], []
         if cd is not None and "t_total_ms" in cd.columns:
-            skupine.append(cd["t_total_ms"].dropna())
-            oznake.append(t("custom-direct\n(ETH · Ethereum Sepolia\n· gas: client)",
+            groups.append(cd["t_total_ms"].dropna())
+            labels.append(t("custom-direct\n(ETH · Ethereum Sepolia\n· gas: client)",
                             "custom-direct\n(ETH · Ethereum Sepolia\n· gas: odjemalec)"))
-            barve.append(ORANGE)
-        skupine.append(xs["t_total_ms"].dropna())
-        oznake.append(branch_label("x402-self", xs))
-        barve.append(BLUE)
-        bp = ax.boxplot(skupine, labels=oznake, patch_artist=True, showfliers=False)
-        for patch, c in zip(bp["boxes"], barve):
+            colors.append(ORANGE)
+        groups.append(xs["t_total_ms"].dropna())
+        labels.append(branch_label("x402-self", xs))
+        colors.append(BLUE)
+        bp = ax.boxplot(groups, labels=labels, patch_artist=True, showfliers=False)
+        for patch, c in zip(bp["boxes"], colors):
             patch.set_facecolor(c)
             patch.set_alpha(0.6)
         ax.set_ylabel(t("t_total [ms]", "t_skupaj [ms]"))
@@ -158,27 +158,27 @@ def main():
         print(f"  – x402 one_time ({n}): no measurements yet — run 01/client: node measurement_client.js --x402")
 
     # ── 2) per reading: cumulative consumer cost (separate units!) ───────────
-    xt, _ = find_file(f"02_machine_payments_per_request/measurements/x402_transakcije_{n}.csv")
+    xt, _ = find_file(f"02_machine_payments_per_request/measurements/x402_transactions_{n}.csv")
     if xt is not None and "cumulative_atomic" in xt.columns:
-        vz = args.vzorec or check_synthetic(xt, "x402 transactions")
-        mark_sample(vz)
+        is_sample = args.sample or check_synthetic(xt, "x402 transactions")
+        mark_sample(is_sample)
         fig, ax = new_figure()
-        enota = _zadnja(xt, "asset", "?")
-        dec = int(float(_zadnja(xt, "decimals", "18") or 18))
+        unit = _last(xt, "asset", "?")
+        dec = int(float(_last(xt, "decimals", "18") or 18))
         ax.plot(xt.index + 1, xt["cumulative_atomic"].astype(float) / 10**dec, marker="o",
-                color=BLUE, label=t(f"x402-self: consumer payment [{enota}]",
-                                    f"x402-self: plačilo potrošnika [{enota}]"))
+                color=BLUE, label=t(f"x402-self: consumer payment [{unit}]",
+                                    f"x402-self: plačilo potrošnika [{unit}]"))
         ax.set_xlabel(t("reading N", "odčitek N"))
-        ax.set_ylabel(t(f"cumulative payment [{enota}]", f"kumulativno plačilo [{enota}]"))
+        ax.set_ylabel(t(f"cumulative payment [{unit}]", f"kumulativno plačilo [{unit}]"))
         ax.set_title(t(f"x402 per reading: the cost grows linearly with N ({n})",
                        f"x402 na odčitek: strošek raste linearno z N ({n})"))
         ax.legend()
         gridlines(ax)
-        placnik = _zadnja(xt, 'gas_payer', t("server", "strežnik")).upper()
-        ax.text(0.99, 0.10, t(f"The gas for all settlements is paid by {placnik} —\n"
+        payer = _last(xt, 'gas_payer', t("server", "strežnik")).upper()
+        ax.text(0.99, 0.10, t(f"The gas for all settlements is paid by {payer} —\n"
                               "it is not included in this curve and is not comparable "
                               "with the folder 02 curve.",
-                              f"Gas vseh poravnav plača {placnik} —\n"
+                              f"Gas vseh poravnav plača {payer} —\n"
                               "ni vštet v to krivuljo in ni primerljiv s krivuljo mape 02."),
                 transform=ax.transAxes, ha="right", va="bottom", fontsize=7,
                 color=MUTED, style="italic")
@@ -189,26 +189,26 @@ def main():
         print(f"  – x402 transactions ({n}): no measurements yet — run 02/agent: node agent.js --x402")
 
     # ── 3) metered session: debits are local in BOTH branches ───────────────
-    xd, _ = find_file(f"03_machine_payments_prepaid/measurements/x402_dobroimetje_{n}.csv")
+    xd, _ = find_file(f"03_machine_payments_prepaid/measurements/x402_credit_{n}.csv")
     dd, _ = find_file(f"03_machine_payments_prepaid/measurements/credit_{n}.csv")
     if xd is not None:
-        vz = args.vzorec or check_synthetic(xd, "x402 credit")
-        mark_sample(vz)
+        is_sample = args.sample or check_synthetic(xd, "x402 credit")
+        mark_sample(is_sample)
         fig, ax = new_figure()
-        skupine, oznake, barve = [], [], []
+        groups, labels, colors = [], [], []
         if dd is not None and "kind" in dd.columns:
             deb = dd[dd["kind"] == "debit"]["t_request_ms"].dropna()
             if len(deb):
-                skupine.append(deb)
-                oznake.append(t("ETH top-up\n→ local debits", "ETH polnitev\n→ lokalne bremenitve"))
-                barve.append(ORANGE)
+                groups.append(deb)
+                labels.append(t("ETH top-up\n→ local debits", "ETH polnitev\n→ lokalne bremenitve"))
+                colors.append(ORANGE)
         deb_x = xd[xd["kind"] == "debit"]["t_request_ms"].dropna()
-        skupine.append(deb_x)
-        oznake.append(t(f"x402/{_zadnja(xd, 'asset', '?')} top-up\n→ local debits",
-                        f"x402/{_zadnja(xd, 'asset', '?')} polnitev\n→ lokalne bremenitve"))
-        barve.append(BLUE)
-        bp = ax.boxplot(skupine, labels=oznake, patch_artist=True, showfliers=False)
-        for patch, c in zip(bp["boxes"], barve):
+        groups.append(deb_x)
+        labels.append(t(f"x402/{_last(xd, 'asset', '?')} top-up\n→ local debits",
+                        f"x402/{_last(xd, 'asset', '?')} polnitev\n→ lokalne bremenitve"))
+        colors.append(BLUE)
+        bp = ax.boxplot(groups, labels=labels, patch_artist=True, showfliers=False)
+        for patch, c in zip(bp["boxes"], colors):
             patch.set_facecolor(c)
             patch.set_alpha(0.6)
         ax.set_ylabel(t("t_request (local debit) [ms]", "t_zahteva (lokalna bremenitev) [ms]"))
@@ -229,8 +229,8 @@ def main():
     # ── 4) topology: x402-self (05/01) vs x402-facilitated (04) ─────────────
     xp, _ = find_file(f"04_website_facilitator/measurements/x402_facilitator_tx_{n}.csv")
     if xp is not None and xs is not None:
-        vz = args.vzorec or check_synthetic(xp, "x402 facilitator")
-        mark_sample(vz)
+        is_sample = args.sample or check_synthetic(xp, "x402 facilitator")
+        mark_sample(is_sample)
         fig, ax = new_figure()
         bp = ax.boxplot(
             [xs["t_payment_http_ms"].dropna(), xp["t_payment_http_ms"].dropna()],

@@ -44,8 +44,8 @@ $('x-pay').onclick = async () => {
     const r = await window.X402Client.payFlow({ url: '/x402/service?prompt=' + encodeURIComponent(prompt), client });
     const body = await r.res.json();
     $('x-result').textContent = JSON.stringify({
-      status: r.status, t_402_ms: +r.t.t402.toFixed(1), t_sign_ms: +(r.t.tPodpis || 0).toFixed(1),
-      t_placilo_ms: +(r.t.tPayment || 0).toFixed(1), txHash: r.txHash, synthetic: r.synthetic, odgovor: body
+      status: r.status, t_402_ms: +r.t.t402.toFixed(1), t_sign_ms: +(r.t.tSign || 0).toFixed(1),
+      t_payment_ms: +(r.t.tPayment || 0).toFixed(1), txHash: r.txHash, synthetic: r.synthetic, response: body
     }, null, 2);
     $('x-result').classList.remove('hidden');
   } catch (e) { $('x-result').textContent = 'error: ' + e.message; $('x-result').classList.remove('hidden'); }

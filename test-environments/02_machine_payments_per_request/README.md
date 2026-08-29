@@ -19,9 +19,9 @@ single credit top-up). Only the two together reveal the amortisation of the paym
 
 For every query the same latency phases as in folder `01` are recorded, extended with cost data:
 
-- **phases (ms):** `t_izziv` (402), `t_oddaja` (submitting the transaction), `t_potrditev` (waiting
-  for the block), `t_preverjanje` (`POST /verify-payment`), `t_odcitek` (`GET /reading` with the
-  token), `t_skupaj`;
+- **phases (ms):** `t_challenge_ms` (402), `t_submit_ms` (submitting the transaction),
+  `t_confirm_ms` (waiting for the block), `t_verify_ms` (`POST /verify-payment`), `t_reading_ms`
+  (`GET /reading` with the token), `t_total_ms`;
 - **cost:** `gas_units`, `gas_price_wei`, `fee_wei`, `fee_eth`, `value_wei` and
   **`cumulative_fee_eth`** (the running total — the central variable of this experiment);
 - **purchased content:** `temperature_c`, `humidity_pct` (proof that the service really was delivered).
@@ -116,7 +116,7 @@ npm run mock          # = node agent.js --mock --queries 20
 ```
 
 Without a valid token the agent receives a `401` on `GET /config`, prints the exact `grep` command
-and exits. In a browser you log in at `http://127.0.0.1:3100/prijava` (username and password from the
+and exits. In a browser you log in at `http://127.0.0.1:3100/login` (username and password from the
 same file); after logging in you are redirected to `/config`.
 
 > `npm start` in the `agent` folder performs the **same mock run** as `npm run mock`. A real run
@@ -225,7 +225,7 @@ yields measured values.
 as simulated.
 
 **`transaction_analysis.py` does not process x402 CSVs.** Those are handled by
-`../comparison/comparison_x402.py`. The joint comparison of folders `02` and `03` (the amortisation
+`../comparison/comparison_x402.py`. The combined comparison of folders `02` and `03` (the amortisation
 chart) is drawn by `../comparison/comparison.py`.
 
 ## Expected outputs
@@ -236,7 +236,7 @@ Paths are relative to this folder.
 |---|---|
 | `agent: npm run mock` | `measurements/transactions_mock.csv` |
 | `agent: npm run real` | `measurements/transactions_real.csv` |
-| `agent: node agent.js --x402` | `measurements/x402_transakcije_mock.csv` (with `--real`: `_real.csv`) |
+| `agent: node agent.js --x402` | `measurements/x402_transactions_mock.csv` (with `--real`: `_real.csv`) |
 | `agent: node agent.js --x402 --security` | `measurements/security_tests_x402_mock.csv` (the name is fixed) |
 | `analysis: python3 transaction_analysis.py` | `analysis/figures/01_cumulative_gas.png`, `analysis/figures/02_query_latency.png` |
 | the device at start-up | `iot_device/data/admin-credentials.txt`, `data/admin.json`, `data/iot_transactions.db` (with x402 also `data/x402_payments.db`) |
@@ -317,7 +317,7 @@ cd iot_device && X402_MODE=self X402_MOCK=true npm run mock
 
 # Terminal 2 — agent
 cd agent && ADMIN_TOKEN=<TOKEN> node agent.js --x402 --queries 20
-#   → measurements/x402_transakcije_mock.csv (28 columns)
+#   → measurements/x402_transactions_mock.csv (28 columns)
 ```
 
 With `X402_MOCK=true` the signatures and verifications are genuine, but the settlements are

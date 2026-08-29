@@ -13,10 +13,10 @@
  *  root privileges, so it is reproducible on a server without special permissions too.
  *
  *  The claim it checks:
- *      direct branch      (folder 05)  →  3 exchanges / 6 messages / 2 relations
- *      facilitator branch (folder 04)  →  5 exchanges / 10 messages / 3 relations
+ *      direct branch      (folder 05)  →  3 exchanges / 6 messages / 2 relationships
+ *      facilitator branch (folder 04)  →  5 exchanges / 10 messages / 3 relationships
  *
- *  RUNNING — the facilitator branch needs TWO counters, because it has THREE relations:
+ *  RUNNING — the facilitator branch needs TWO counters, because it has THREE relationships:
  *    node count-proxy.js --listen=3101 --target=http://127.0.0.1:8081 --tag=merchant
  *    node count-proxy.js --listen=3102 --target=http://127.0.0.1:4000 --tag=facilitator
  *
@@ -29,8 +29,8 @@
  *         --merchant-url http://127.0.0.1:3101 --facilitator-url http://127.0.0.1:3102
  *
  *  RUNNING — the direct branch (folder 05) needs a single one:
- *    node count-proxy.js --listen=3101 --target=http://127.0.0.1:8080 --tag=neposredno
- *    (the tag stays `neposredno` — the analysis script recognises the direct branch by it)
+ *    node count-proxy.js --listen=3101 --target=http://127.0.0.1:8080 --tag=direct
+ *    (the tag must stay `direct` — the analysis script recognises the direct branch by it)
  *
  *  Stop the counter with Ctrl+C: it then prints a summary and writes the CSV.
  *
@@ -64,8 +64,8 @@ const OUT = args.out || path.join(__dirname, '..', 'measurements', `e9_${TAG}.cs
 const QUIET = args.quiet === 'true';
 
 // Preparatory routes — we record them, but they do not count towards the payment flow.
-const NEPLACILNE = [/^\/config/, /^\/health/, /^\/login/, /^\/logout/, /^\/session/, /^\/run\//, /^\/favicon/];
-const jePlacilna = (path) => !NEPLACILNE.some((re) => re.test(path));
+const NON_PAYMENT = [/^\/config/, /^\/health/, /^\/login/, /^\/logout/, /^\/session/, /^\/run\//, /^\/favicon/];
+const isPayment = (path) => !NON_PAYMENT.some((re) => re.test(path));
 
 let n = 0;
 const rows = [];
@@ -91,7 +91,7 @@ const server = http.createServer((req, res) => {
       n += 1;
       const ms = Number(process.hrtime.bigint() - t0) / 1e6;
       const path = req.url.split('?')[0];
-      const payment = !sse && jePlacilna(path);
+      const payment = !sse && isPayment(path);
       const row = { i: n, tag: TAG, method: req.method, path, status: upRes.statusCode,
         request_b: reqBytes, response_b: respBytes, ms: +ms.toFixed(2), flow: sse ? 1 : 0, payment: payment ? 1 : 0 };
       rows.push(row);
@@ -105,15 +105,15 @@ const server = http.createServer((req, res) => {
 server.listen(LISTEN, '127.0.0.1', () =>
   console.log(`[${TAG}] counting proxy :${LISTEN} → ${TARGET.href}\n         stop with Ctrl+C (it then writes ${path.relative(process.cwd(), OUT)})`));
 
-function zakljuci() {
+function finish() {
   // SSE streams and preparatory routes are not payment exchanges.
-  const placilne = rows.filter(r => r.payment);
+  const paymentRows = rows.filter(r => r.payment);
   console.log(`\n[${TAG}] ── summary ─────────────────────────────────────────`);
-  console.log(`  exchanges (request+response): ${placilne.length}`);
-  console.log(`  messages (HTTP):              ${placilne.length * 2}`);
-  const ostalo = rows.length - placilne.length;
-  if (ostalo) console.log(`  (plus ${ostalo} preparatory requests / SSE streams — not counted)`);
-  for (const r of placilne) console.log(`    ${String(r.i).padStart(3)}. ${r.method.padEnd(5)} ${r.path.padEnd(32)} ${r.status}`);
+  console.log(`  exchanges (request+response): ${paymentRows.length}`);
+  console.log(`  messages (HTTP):              ${paymentRows.length * 2}`);
+  const other = rows.length - paymentRows.length;
+  if (other) console.log(`  (plus ${other} preparatory requests / SSE streams — not counted)`);
+  for (const r of paymentRows) console.log(`    ${String(r.i).padStart(3)}. ${r.method.padEnd(5)} ${r.path.padEnd(32)} ${r.status}`);
   try {
     fs.mkdirSync(path.dirname(OUT), { recursive: true });
     fs.writeFileSync(OUT, 'i,tag,method,path,status,request_b,response_b,ms,flow,payment\n' +
@@ -122,5 +122,5 @@ function zakljuci() {
   } catch (e) { console.error(`  CSV was not written: ${e.message}`); }
   process.exit(0);
 }
-process.on('SIGINT', zakljuci);
-process.on('SIGTERM', zakljuci);
+process.on('SIGINT', finish);
+process.on('SIGTERM', finish);

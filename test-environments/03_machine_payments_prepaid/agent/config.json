@@ -4,6 +4,6 @@
   "RPC_URL": "https://ethereum-sepolia-rpc.publicnode.com",
   "CONFIRMATIONS": 1,
   "_note": "IOT_URL points to the metered IoT device (sessions) — it only says WHERE the agent sends requests; it is not an identity (see ../../docs/IDENTITY.md §1).",
-  "_note_hostname": "A hostname is recommended instead of an IP address (e.g. http://iot.your-domain.si:3200): when the device's IP changes, the configuration does not need to change. The value can also be set with the IOT_URL environment variable, which takes precedence over this file: IOT_URL=http://iot.your-domain.si:3200 npm run mock",
+  "_note_hostname": "A hostname is recommended instead of an IP address (e.g. http://iot.your-domain.example:3200): when the device's IP changes, the configuration does not need to change. The value can also be set with the IOT_URL environment variable, which takes precedence over this file: IOT_URL=http://iot.your-domain.example:3200 npm run mock",
   "_note_wireshark": "For capture in Wireshark use http:// (without TLS). The session identity is the wallet + EIP-191 signature, not the IP address — the session therefore survives a network change."
 }

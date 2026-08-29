@@ -137,7 +137,7 @@ const uuidSchema = z.string().uuid('Invalid request ID');
 const addressSchema = z.string().refine(v => { try { ethers.getAddress(v); return true; } catch { return false; } }, 'Invalid Ethereum address');
 
 // The MERGED exchange carries the payment claim AND the order in one body.
-const zdruzenoSchema = z.object({
+const mergedSchema = z.object({
   requestId: uuidSchema,
   txHash: txHashSchema,
   network: z.literal(NETWORK),
@@ -266,7 +266,7 @@ app.get('/config', (req, res) => {
     mockVerify: MOCK_VERIFY,
     aiEnabled: !!openai,
     model: OPENAI_MODEL,
-    potek: 'merged: 2 exchanges / 4 messages (GET->402, POST->200+content+token)',
+    flow: 'merged: 2 exchanges / 4 messages (GET->402, POST->200+content+token)',
     x402: x402.enabled ? x402.summary() : null
   });
 });
@@ -434,7 +434,7 @@ app.post('/service', verifyLimiter, async (req, res) => {
   }
 
   // ── MERGED path: verify the on-chain payment AND deliver the content ──
-  const parsed = zdruzenoSchema.safeParse(req.body || {});
+  const parsed = mergedSchema.safeParse(req.body || {});
   if (!parsed.success) { res.setHeader('X-Server-Ms', serverMs(req)); return res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() }); }
   const { requestId, txHash, payerAddress, prompt, model: requestedModel } = parsed.data;
   const model = requestedModel && MODEL_PRICING[requestedModel] ? requestedModel : OPENAI_MODEL;
@@ -561,7 +561,7 @@ if (x402.enabled) {
       network: row.network, asset: row.asset, amountAtomic: row.amount_atomic,
       payer: row.payer, payTo: row.pay_to, txHash: row.tx_hash,
       block: row.block_number, gasUnits: row.gas_used, gasPriceWei: row.effective_gas_price,
-      poskusi: row.attempt, ustvarjeno: row.created_at, posodobljeno: row.updated_at
+      attempts: row.attempt, createdAt: row.created_at, updatedAt: row.updated_at
     });
   });
 

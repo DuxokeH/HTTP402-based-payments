@@ -13,9 +13,9 @@ of its own or not.
 
 ## What the experiment measures
 
-- **The latency of the merged phase** `t_zdruzeno` (`POST /service`: verification + delivery)
-  against the sum of `t_preverjanje + t_dostop` from folder 01. Expected:
-  `t_zdruzeno ≈ t_preverjanje + t_dostop − 1 × RTT`.
+- **The latency of the merged phase** `t_merged_ms` (`POST /service`: verification + delivery)
+  against the sum of `t_verify_ms + t_access_ms` from folder 01. Expected:
+  `t_merged_ms ≈ t_verify_ms + t_access_ms − 1 × RTT`.
 - **The number of messages on the wire.** The paid flow has exactly **two** request/response
   pairs (folder 01 has three). In a Wireshark capture they are preceded by one more request,
   `GET /health`, which the measurement client uses at startup to check that the server is
@@ -205,7 +205,7 @@ Every run sends a **real transaction** to Sepolia and spends test ETH (default p
 are **appended to**, so otherwise the runs end up mixed in the same file:
 
 ```bash
-rm -f ../measurements/merged_mock.csv ../measurements/merged_mock_povzetek.json
+rm -f ../measurements/merged_mock.csv ../measurements/merged_mock_summary.json
 ```
 
 **Terminal 1 — server:**
@@ -224,7 +224,7 @@ npm run real            # = node measurement_client.js --real --runs 5 --pause-m
 ```
 
 Result: `../measurements/merged_real.csv` (with the actual gas consumption and block numbers) and
-`merged_real_povzetek.json`.
+`merged_real_summary.json`.
 
 If you want to record the flow with Wireshark, start the capture **before** the client and use
 plain `http://` (see [Wireshark capture](../README.md#wireshark-capture)). The paid flow must
@@ -281,11 +281,11 @@ This folder **has no admin login** and does not use `ADMIN_TOKEN` — both are n
 
 | phase | meaning |
 |---|---|
-| `t_izziv` | `GET /service` → 402 (messages 1 + 2) |
-| `t_oddaja` | signing and submitting the transaction (up to `txHash`); in mock mode **local signing only** of a dummy transaction, with no submission |
-| `t_potrditev` | waiting for a block (real; always 0 in mock mode) |
-| `t_zdruzeno` | `POST /service` → 200 (messages 3 + 4: verification + delivery) |
-| `t_skupaj` | from the start to the end of the flow |
+| `t_challenge_ms` | `GET /service` → 402 (messages 1 + 2) |
+| `t_submit_ms` | signing and submitting the transaction (up to `txHash`); in mock mode **local signing only** of a dummy transaction, with no submission |
+| `t_confirm_ms` | waiting for a block (real; always 0 in mock mode) |
+| `t_merged_ms` | `POST /service` → 200 (messages 3 + 4: verification + delivery) |
+| `t_total_ms` | from the start to the end of the flow |
 
 The server returns `X-Server-Ms` and `X-Request-Id` with **every** response. The
 `X-Chain-Read-Ms` header is added only by `POST /service` in non-mock mode, and `X-Downstream-Ms`
@@ -322,7 +322,7 @@ exist** in the repository, and the generator in
 [`../comparison/generate_sample.py`](../comparison/generate_sample.py) **does not create it** for
 scenario 06 (it only knows scenarios 01–03) — you produce the input data with an actual run.
 
-The `x402_zdruzena_*.csv` files (parallel x402 v2 mode) have a **different header**; automatic
+The `x402_merged_*.csv` files (parallel x402 v2 mode) have a **different header**; automatic
 discovery does not pick them up, and `latency_analysis.py` cannot process them.
 
 ## Expected outputs
@@ -331,9 +331,9 @@ All measurement files are created in `06_x402/measurements/` (the folder creates
 
 | command | CSV | JSON summary |
 |---|---|---|
-| `npm run mock` / `npm start` (client) | `merged_mock.csv` | `merged_mock_povzetek.json` |
-| `npm run real` | `merged_real.csv` | `merged_real_povzetek.json` |
-| `node measurement_client.js --x402` | `x402_zdruzena_mock.csv` | `x402_zdruzena_mock_povzetek.json` |
+| `npm run mock` / `npm start` (client) | `merged_mock.csv` | `merged_mock_summary.json` |
+| `npm run real` | `merged_real.csv` | `merged_real_summary.json` |
+| `node measurement_client.js --x402` | `x402_merged_mock.csv` | `x402_merged_mock_summary.json` |
 | `npm run security` | `security_tests_mock.csv` | — |
 | `node measurement_client.js --security --real` | `security_tests_real.csv` | — |
 | `node measurement_client.js --x402 --security` | `security_tests_x402_mock.csv` | — |
@@ -354,7 +354,7 @@ The analysis writes to `analysis/figures/`:
 - `03_summary_table.png` — table of min / median / mean / p95 / max
 - `latency_summary.csv` — the same table in CSV form
 
-Only phases whose sum exceeds 0 are plotted, so in mock mode `t_potrditev` (always 0) is dropped
+Only phases whose sum exceeds 0 are plotted, so in mock mode `t_confirm_ms` (always 0) is dropped
 automatically.
 
 Signs of success: on startup the server prints the port and the mode (`mockVerify`); during the
@@ -381,11 +381,11 @@ node measurement_client.js --security --real     # → ../measurements/security_
 ```
 
 It writes 9 rows: tests T1–T6 actually run, while the last three (wrong recipient, amount too
-low, payer mismatch) are recorded as **`preskočeno`** ("skipped") and count as passed — in that
+low, payer mismatch) are recorded as **`skipped`** and count as passed — in that
 CSV they are therefore not real measurements.
 
 Before every run the client calls `GET /health`. If the server is unreachable, it prints
-"Je strežnik zagnan?" and exits with code 1.
+"Is the server running?" and exits with code 1.
 
 ## x402 v2 (parallel mode)
 
@@ -403,7 +403,7 @@ X402_MODE=self X402_MOCK=true npm run mock
 
 # client
 cd ../client
-node measurement_client.js --x402 --runs 30       # → ../measurements/x402_zdruzena_mock.csv
+node measurement_client.js --x402 --runs 30       # → ../measurements/x402_merged_mock.csv
 node measurement_client.js --x402 --security      # → ../measurements/security_tests_x402_mock.csv
 ```
 
@@ -427,7 +427,7 @@ are mock-only). The combination `--x402 --real` (a measurement run) exits with c
 server side anyway (see the first limitation above).
 
 Official x402 v2 likewise puts **4 messages** on the wire — the difference lies in **what**
-travels in the second pair: with x402 it is a signed EIP-3009 authorisation (settled by the
+travels in the second pair: with x402 it is a signed EIP-3009 authorization (settled by the
 server), here it is proof of an already settled transaction (settled by the client).
 
 ## Troubleshooting
@@ -435,7 +435,7 @@ server), here it is proof of an already settled transaction (settled by the clie
 | symptom | cause and fix |
 |---|---|
 | the server exits immediately (`fatal … wallet.json`) | `server/wallet.json` is missing — `cp wallet.example.json wallet.json` and enter the address |
-| client: "Je strežnik zagnan?" | the server is not running, or `MERCHANT_URL` is wrong; check `curl http://<SERVER_IP>:3300/health` |
+| client: "Is the server running?" | the server is not running, or `MERCHANT_URL` is wrong; check `curl http://<SERVER_IP>:3300/health` |
 | response **429** | the limit of 60 `POST /service` requests per minute was exceeded — wait a minute or raise `RATE_VERIFY_PER_MIN` |
 | the charts show the wrong run | `latency_analysis.py` gives precedence to `merged_real.csv`; name the file explicitly or delete the old one |
 | several runs mixed into one CSV | measurement CSVs are appended to — delete the file before a new run |

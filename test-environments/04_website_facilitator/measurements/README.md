@@ -9,7 +9,7 @@ yourself (see [`../README.md`](../README.md)).
 | `facilitator_metered_mock.csv` / `..._real.csv` | `node agent.js --metered` | **metered session** |
 | `*_summary.json` | the same | condensed run statistics |
 | `facilitator_security.csv` | `node agent.js --security` | fixes for bugs 1, 2, 3, 5 + abuse |
-| `e9_merchant.csv`, `e9_facilitator.csv`, `e9_neposredno.csv` | `node count-proxy.js` | **message count** |
+| `e9_merchant.csv`, `e9_facilitator.csv`, `e9_direct.csv` | `node count-proxy.js` | **message count** |
 
 > **The CSV is APPENDED TO, not overwritten.** Delete the old file before repeating the same
 > experiment, otherwise two runs merge into one and the analysis treats them as a single sample.

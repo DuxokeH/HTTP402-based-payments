@@ -51,10 +51,10 @@
       <h2>Measurements (browser)</h2>
       <table class="timing">
         <tbody>
-          <tr><td>t_izziv (402)</td><td id="t-izziv" class="mono">—</td></tr>
-          <tr><td>t_potrditev (block)</td><td id="t-potrditev" class="mono">—</td></tr>
-          <tr><td>t_zdruzeno (proof + delivery)</td><td id="t-zdruzeno" class="mono">—</td></tr>
-          <tr><td><strong>t_skupaj</strong></td><td id="t-skupaj" class="mono"><strong>—</strong></td></tr>
+          <tr><td>t_challenge (402)</td><td id="t-challenge" class="mono">—</td></tr>
+          <tr><td>t_confirm (block)</td><td id="t-confirm" class="mono">—</td></tr>
+          <tr><td>t_merged (proof + delivery)</td><td id="t-merged" class="mono">—</td></tr>
+          <tr><td><strong>t_total</strong></td><td id="t-total" class="mono"><strong>—</strong></td></tr>
         </tbody>
       </table>
       <p class="meta">For visual proof of the flow, capture the traffic with Wireshark in parallel (filter <code>http</code>) — exactly TWO request/response pairs will be visible.</p>
@@ -73,8 +73,8 @@
 
     <!-- x402 v2 (parallel mode): official protocol, ETH — testnet, Ethereum Sepolia -->
     <section id="x402-card" class="card">
-      <h2>x402 v2 — payment with an authorisation (ETH — testnet, Ethereum Sepolia)</h2>
-      <p class="meta">Parallel mode: MetaMask signs an <b>EIP-3009 authorisation</b> (no transaction, no gas for the payer); the server verifies the payment itself and <b>settles it itself</b> (synthetically in test mode; amounts in ETH). The flow above (native ETH on Sepolia) stays unchanged. Both flows carry 4 messages on the wire — the difference is WHAT travels in the second pair.</p>
+      <h2>x402 v2 — payment with an authorization (ETH — testnet, Ethereum Sepolia)</h2>
+      <p class="meta">Parallel mode: MetaMask signs an <b>EIP-3009 authorization</b> (no transaction, no gas for the payer); the server verifies the payment itself and <b>settles it itself</b> (synthetically in test mode; amounts in ETH). The flow above (native ETH on Sepolia) stays unchanged. Both flows carry 4 messages on the wire — the difference is WHAT travels in the second pair.</p>
       <div class="row"><span>Status</span><span id="x-status">—</span></div>
       <button id="x-connect" type="button">Connect MetaMask (Ethereum Sepolia)</button>
       <button id="x-pay" type="button" disabled>Pay with x402</button>

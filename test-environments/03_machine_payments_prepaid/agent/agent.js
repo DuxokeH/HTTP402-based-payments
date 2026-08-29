@@ -49,7 +49,7 @@ const TOPUP_WEI = val('--topup-wei', '2500000000000');       // real-mode top-up
 const SECURITY = has('--security');
 const X402 = has('--x402');   // NEW parallel mode: x402 top-up + local v2 debits
 const OUT = val('--out', path.join(__dirname, '..', 'measurements',
-  X402 ? `x402_dobroimetje_${MODE}.csv` : `credit_${MODE}.csv`));
+  X402 ? `x402_credit_${MODE}.csv` : `credit_${MODE}.csv`));
 
 const http = axios.create({ baseURL: IOT_URL, timeout: 90_000, validateStatus: () => true,
   headers: ADMIN_TOKEN ? { Authorization: `Bearer ${ADMIN_TOKEN}` } : {} });
@@ -122,24 +122,24 @@ async function oneDebit(i, session, maxWei) {
   const T0 = performance.now();
   let s = performance.now();
   const sig = await wallet.signMessage(debitMessage(wallet.address, session.sessionId, nonce, p, maxWei));
-  const tPodpis = performance.now() - s;
+  const tSign = performance.now() - s;
 
   s = performance.now();
   const r = await http.get('/reading-metered', { headers: { 'X-Payer': wallet.address, 'X-Session': session.sessionId, 'X-Nonce': nonce, 'X-Signature': sig, 'X-Max-Wei': String(maxWei) } });
-  const tZahteva = performance.now() - s;
-  const tSkupaj = performance.now() - T0;
+  const tRequest = performance.now() - s;
+  const tTotal = performance.now() - T0;
   if (r.status !== 200) throw new Error(`reading-metered ${r.status}: ${JSON.stringify(r.data)}`);
   const reading = r.data.reading;
-  const cena = hdr(r, 'X-Charged-Wei'), balance = hdr(r, 'X-Balance-Wei'), budgetLeft = hdr(r, 'X-Budget-Remaining-Wei');
-  console.log(`  ✓ debit ${String(i).padStart(2)} · T=${reading.temperature_c}°C RH=${reading.humidity_pct}% · t_sign=${num(tPodpis)} ms · t_request=${num(tZahteva)} ms · price=${cena} wei · credit=${balance} wei`);
+  const charged = hdr(r, 'X-Charged-Wei'), balance = hdr(r, 'X-Balance-Wei'), budgetLeft = hdr(r, 'X-Budget-Remaining-Wei');
+  console.log(`  ✓ debit ${String(i).padStart(2)} · T=${reading.temperature_c}°C RH=${reading.humidity_pct}% · t_sign=${num(tSign)} ms · t_request=${num(tRequest)} ms · price=${charged} wei · credit=${balance} wei`);
   return [
-    `debit_${i}`, nowIso(), MODE, 'debit', num(tPodpis), num(tZahteva), num(parseFloat(hdr(r, 'X-Server-Ms')) || 0), num(tSkupaj),
-    cena, balance, budgetLeft, '', '', reading.temperature_c, reading.humidity_pct, nonce, session.sessionId
+    `debit_${i}`, nowIso(), MODE, 'debit', num(tSign), num(tRequest), num(parseFloat(hdr(r, 'X-Server-Ms')) || 0), num(tTotal),
+    charged, balance, budgetLeft, '', '', reading.temperature_c, reading.humidity_pct, nonce, session.sessionId
   ];
 }
 
 // The device is locked down with an admin login — nothing works without a valid token.
-function napakaPrijave(ukaz) {
+function loginError(command) {
   console.error(`
 ❌ The device rejected the login (401). The measurement agent needs a machine token.
 
@@ -148,10 +148,10 @@ function napakaPrijave(ukaz) {
 
    Then pass it to the agent:
      export ADMIN_TOKEN=<token>
-     npm run ${ukaz}
+     npm run ${command}
 
    Or in one line:
-     ADMIN_TOKEN=$(grep '^TOKEN=' ../iot_device/data/admin-credentials.txt | cut -d= -f2) npm run ${ukaz}
+     ADMIN_TOKEN=$(grep '^TOKEN=' ../iot_device/data/admin-credentials.txt | cut -d= -f2) npm run ${command}
 `);
   process.exitCode = 1;
 }
@@ -160,7 +160,7 @@ async function main() {
   wallet = makeWallet();
   banner(`METERED SESSION · mode=${MODE.toUpperCase()} · N debits=${DEBITS} · device=${IOT_URL}`);
   const c = await http.get('/config');
-  if (c.status === 401) { napakaPrijave(MODE === 'real' ? 'real' : 'mock'); return; }
+  if (c.status === 401) { loginError(MODE === 'real' ? 'real' : 'mock'); return; }
   // Create the CSV only now: otherwise a failed login would leave a header-only
   // file, which the analysis would pick over the sample data and crash on the empty table.
   ensureCsv(OUT);
@@ -172,13 +172,13 @@ async function main() {
   fs.appendFileSync(OUT, topupRow.join(',') + '\n');
 
   banner(`PHASE B · ${DEBITS} signed debits (no new transactions)`);
-  const tPod = [], tZah = [];
+  const tSignAll = [], tRequestAll = [];
   let ok = 0, cur = session;
   for (let i = 1; i <= DEBITS; i++) {
     try {
       const row = await oneDebit(i, cur, maxWei);
       fs.appendFileSync(OUT, row.join(',') + '\n');
-      tPod.push(parseFloat(row[4])); tZah.push(parseFloat(row[5])); ok++;
+      tSignAll.push(parseFloat(row[4])); tRequestAll.push(parseFloat(row[5])); ok++;
     } catch (e) { console.error(`  ✗ debit ${i}: ${e.message}`); }
     if (PAUSE_MS) await sleep(PAUSE_MS);
   }
@@ -186,7 +186,7 @@ async function main() {
   const st = (a) => { a = a.filter(Number.isFinite).sort((x, y) => x - y); if (!a.length) return null; const q = p => a[Math.floor(p * (a.length - 1))]; return { n: a.length, min: a[0], median: q(0.5), mean: a.reduce((s, x) => s + x, 0) / a.length, p95: q(0.95), max: a[a.length - 1] }; };
   const final = (await http.get(`/session/${session.sessionId}`)).data.session;
   banner(`SUMMARY · ${ok}/${DEBITS} succeeded · on-chain transactions: 1 (top-up only) · CSV: ${path.relative(process.cwd(), OUT)}`);
-  const sp = st(tPod), sz = st(tZah);
+  const sp = st(tSignAll), sz = st(tRequestAll);
   if (sp) console.log(`  t_sign    (ms): median=${num(sp.median)} mean=${num(sp.mean)} p95=${num(sp.p95)} max=${num(sp.max)}`);
   if (sz) console.log(`  t_request (ms): median=${num(sz.median)} mean=${num(sz.mean)} p95=${num(sz.p95)} max=${num(sz.max)}`);
   console.log(`  Final session state: credit=${final.balanceWei} wei · spent=${final.spentWei} wei · budget remaining=${final.budgetRemainingWei} wei`);
@@ -203,9 +203,9 @@ async function runSecurity() {
   banner(`SECURITY AND FAILURE TESTS (metered session) · mode=${MODE.toUpperCase()}`);
   if (MODE === 'real') { console.error('  The security tests are designed for --mock (they use a mock deposit for quick cases). Run: node agent.js --security'); process.exit(1); }
   const results = [];
-  const rec = (ime, prc, dej, ok, op = '') => { results.push({ ime, prc, dej, ok, op }); console.log(`  ${ok ? '✓' : '✗'} ${ime.padEnd(44)} expected=${String(prc).padEnd(8)} actual=${String(dej).padEnd(8)} ${op}`); };
+  const rec = (name, expected, actual, ok, note = '') => { results.push({ name, expected, actual, ok, note }); console.log(`  ${ok ? '✓' : '✗'} ${name.padEnd(44)} expected=${String(expected).padEnd(8)} actual=${String(actual).padEnd(8)} ${note}`); };
   const cRes = await http.get('/config');
-  if (cRes.status === 401) { napakaPrijave('security'); return; }
+  if (cRes.status === 401) { loginError('security'); return; }
   const c = cRes.data;
   const price = BigInt(c.priceWeiPerCall);
   const maxWei = (price + BigInt(c.priceWeiPerByte) * 4096n).toString();
@@ -273,7 +273,7 @@ async function runSecurity() {
   banner(`RESULT · ${passed}/${results.length} passed`);
   const out = path.join(__dirname, '..', 'measurements', `security_tests_${MODE}.csv`);
   fs.mkdirSync(path.dirname(out), { recursive: true });
-  fs.writeFileSync(out, 'test,expected,actual,passed,note\n' + results.map(x => [JSON.stringify(x.ime), x.prc, x.dej, x.ok ? 'yes' : 'no', JSON.stringify(x.op)].join(',')).join('\n') + '\n');
+  fs.writeFileSync(out, 'test,expected,actual,passed,note\n' + results.map(x => [JSON.stringify(x.name), x.expected, x.actual, x.ok ? 'yes' : 'no', JSON.stringify(x.note)].join(',')).join('\n') + '\n');
   console.log(`  CSV: ${path.relative(process.cwd(), out)}`);
 }
 
@@ -313,20 +313,20 @@ async function x402Debit({ account, cfgX, sessionId, i }) {
   const t0 = performance.now();
   const msg = debitMessageV2(account.address, sessionId, nonce, cfgX.meteredEndpoint, maxAtomic, cfgX.network, cfgX.asset);
   const signature = await account.signMessage({ message: msg });   // EIP-191 personal_sign (viem)
-  const tPodpis = performance.now() - t0;
+  const tSign = performance.now() - t0;
 
   const t1 = performance.now();
   const r = await http.get(cfgX.meteredEndpoint, { headers: {
     'X-Payer': account.address, 'X-Session': sessionId, 'X-Nonce': nonce,
     'X-Signature': signature, 'X-Max-Atomic': maxAtomic
   } });
-  const tZahteva = performance.now() - t1;
-  return { r, nonce, tPodpis, tZahteva };
+  const tRequest = performance.now() - t1;
+  return { r, nonce, tSign, tRequest };
 }
 
 async function mainX402() {
   const cfgR = await http.get('/x402/config');
-  if (cfgR.status === 401) { napakaPrijave(); return; }
+  if (cfgR.status === 401) { loginError(); return; }
   if (cfgR.status !== 200 || !cfgR.data || cfgR.data.mode === 'off') {
     console.error('❌ The device does not have x402 mode enabled (X402_MODE=self [+ X402_MOCK=true]).'); process.exit(1);
   }
@@ -348,7 +348,7 @@ async function mainX402() {
     headers: ADMIN_TOKEN ? { Authorization: `Bearer ${ADMIN_TOKEN}` } : {},
     body: {}
   });
-  const tOpenSkupaj = performance.now() - T0;
+  const tOpenTotal = performance.now() - T0;
   if (open.status !== 200) { console.error(`❌ top-up ${open.status}: ${await open.res.text().catch(() => '')}`); process.exit(1); }
   const openBody = await open.res.json();
   const session = openBody.session;
@@ -360,7 +360,7 @@ async function mainX402() {
     if (pv.status === 200) { block = pv.data.block ?? ''; gasUnits = pv.data.gasUnits ?? ''; gasPriceWei = pv.data.gasPriceWei ?? ''; } }
   fs.appendFileSync(OUT, [
     'topup', nowIso(), MODE, 'x402-self', 'topup', cfgX.network, cfgX.assetName, 'server',
-    num(open.t.tPodpis), num(open.t.tPoravnavaHttp), num(open.serverMs), num(tOpenSkupaj),
+    num(open.t.tSign), num(open.t.tPaymentHttp), num(open.serverMs), num(tOpenTotal),
     '', session.depositAtomic, session.budgetAtomic, session.depositAtomic,
     num(open.verifyMs), num(open.settleMs), open.paymentId,
     open.paymentResponse ? open.paymentResponse.txHash : '', open.synthetic ? 1 : 0,
@@ -369,22 +369,22 @@ async function mainX402() {
 
   // PHASE B — N local debits (NO settlements on chain)
   banner(`PHASE B · ${DEBITS} local debits (EIP-191, v2 message)`);
-  const totals = { podpis: [], zahteva: [] };
+  const totals = { sign: [], request: [] };
   let ok = 0;
   for (let i = 1; i <= DEBITS; i++) {
     try {
-      const { r, nonce, tPodpis, tZahteva } = await x402Debit({ account, cfgX, sessionId: session.sessionId, i });
+      const { r, nonce, tSign, tRequest } = await x402Debit({ account, cfgX, sessionId: session.sessionId, i });
       if (r.status !== 200) throw new Error(`${r.status}: ${JSON.stringify(r.data)}`);
       const reading = r.data.reading || {};
       fs.appendFileSync(OUT, [
         `debit_${i}`, nowIso(), MODE, 'x402-self', 'debit', cfgX.network, cfgX.assetName, '',
-        num(tPodpis), num(tZahteva), hdr(r, 'X-Server-Ms'), num(tPodpis + tZahteva),
+        num(tSign), num(tRequest), hdr(r, 'X-Server-Ms'), num(tSign + tRequest),
         hdr(r, 'X-Charged-Atomic'), hdr(r, 'X-Balance-Atomic'), hdr(r, 'X-Budget-Remaining-Atomic'), '',
         '', '', '', '', 0, '', '', '',
         reading.temperature_c ?? '', reading.humidity_pct ?? '', nonce, session.sessionId, 'metered-debit-v2'
       ].join(',') + '\n');
-      totals.podpis.push(tPodpis); totals.zahteva.push(tZahteva);
-      console.log(`  ✓ debit ${String(i).padStart(2)} · T=${reading.temperature_c}°C RH=${reading.humidity_pct}% · t_sign=${num(tPodpis)} ms · t_request=${num(tZahteva)} ms · credit=${hdr(r, 'X-Balance-Atomic')} atomic`);
+      totals.sign.push(tSign); totals.request.push(tRequest);
+      console.log(`  ✓ debit ${String(i).padStart(2)} · T=${reading.temperature_c}°C RH=${reading.humidity_pct}% · t_sign=${num(tSign)} ms · t_request=${num(tRequest)} ms · credit=${hdr(r, 'X-Balance-Atomic')} atomic`);
       ok++;
     } catch (e) { console.error(`  ✗ debit ${i}: ${e.message}`); }
     if (PAUSE_MS) await sleep(PAUSE_MS);
@@ -392,7 +392,7 @@ async function mainX402() {
 
   banner(`x402 SUMMARY · ${ok}/${DEBITS} succeeded · on-chain settlements: 1 (top-up only) · CSV: ${path.relative(process.cwd(), OUT)}`);
   const st = (a) => { const b = a.filter(Number.isFinite).sort((x, y) => x - y); if (!b.length) return null; const q = (p) => b[Math.min(b.length - 1, Math.floor(p * (b.length - 1)))]; return { median: q(0.5), mean: b.reduce((s2, x) => s2 + x, 0) / b.length, max: b[b.length - 1] }; };
-  const sp = st(totals.podpis), sz = st(totals.zahteva);
+  const sp = st(totals.sign), sz = st(totals.request);
   if (sp) console.log(`  t_sign    (ms): median=${num(sp.median)} mean=${num(sp.mean)} max=${num(sp.max)}`);
   if (sz) console.log(`  t_request (ms): median=${num(sz.median)} mean=${num(sz.mean)} max=${num(sz.max)}`);
   const view = await http.get(`/x402/session/${session.sessionId}`);
@@ -407,7 +407,7 @@ async function mainX402() {
 // ── x402 security tests (v2 message, format separation, limits) ─────────────
 async function securityX402() {
   const cfgR = await http.get('/x402/config');
-  if (cfgR.status === 401) { napakaPrijave(); return; }
+  if (cfgR.status === 401) { loginError(); return; }
   if (cfgR.status !== 200 || cfgR.data.mode === 'off' || !cfgR.data.mock) {
     console.error('❌ The tests require a device with X402_MODE=self X402_MOCK=true.'); process.exit(1);
   }
@@ -417,7 +417,7 @@ async function securityX402() {
   const H = ADMIN_TOKEN ? { Authorization: `Bearer ${ADMIN_TOKEN}` } : {};
   banner('x402 SECURITY TESTS (folder 03 — session funding + local v2 metering)');
   const results = [];
-  const rec = (ime, prc, dej, ok, op = '') => { results.push({ ime, prc, dej, ok, op }); console.log(`  ${ok ? '✓' : '✗'} ${ime.padEnd(46)} expected=${String(prc).padEnd(12)} actual=${String(dej).padEnd(9)} ${op}`); };
+  const rec = (name, expected, actual, ok, note = '') => { results.push({ name, expected, actual, ok, note }); console.log(`  ${ok ? '✓' : '✗'} ${name.padEnd(46)} expected=${String(expected).padEnd(12)} actual=${String(actual).padEnd(9)} ${note}`); };
 
   // session via an x402 top-up
   const open = await x402o.payFlow({ url: `${IOT_URL}/x402/session/open`, method: 'POST', account, client, headers: H, body: {} });
@@ -471,7 +471,7 @@ async function securityX402() {
     rec('T8 top-up replay → the SAME session (replayed)', session.sessionId.slice(0, 14) + '…', b && b.session ? b.session.sessionId.slice(0, 14) + '…' : r.status, !!b && b.session && b.session.sessionId === session.sessionId && r.replayed);
   }
   { // T9: malformed JSON → 400 (err.status fix)
-    const r = await http.post('/session/open', '{pokvarjen', { headers: { 'Content-Type': 'application/json' } });
+    const r = await http.post('/session/open', '{corrupt', { headers: { 'Content-Type': 'application/json' } });
     rec('T9 malformed JSON → 400 (not 500)', 400, r.status, r.status === 400);
   }
 
@@ -480,7 +480,7 @@ async function securityX402() {
   const csvOut = path.join(__dirname, '..', 'measurements', 'security_tests_x402_mock.csv');
   fs.mkdirSync(path.dirname(csvOut), { recursive: true });
   fs.writeFileSync(csvOut, 'test,expected,actual,passed,note\n' +
-    results.map((x) => [JSON.stringify(x.ime), x.prc, x.dej, x.ok ? 1 : 0, JSON.stringify(x.op)].join(',')).join('\n') + '\n');
+    results.map((x) => [JSON.stringify(x.name), x.expected, x.actual, x.ok ? 1 : 0, JSON.stringify(x.note)].join(',')).join('\n') + '\n');
   console.log(`  CSV: ${path.relative(process.cwd(), csvOut)}`);
   if (okAll !== results.length) process.exitCode = 1;
 }

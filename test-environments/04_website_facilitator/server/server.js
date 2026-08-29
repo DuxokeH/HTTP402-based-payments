@@ -128,7 +128,7 @@ if (x402.enabled) {
     process.exit(1);
   }
 }
-logger.info({ facilitator: facilitator.url, javniNaslov: facilitator.publicUrl }, 'Topology (b): the merchant has no chain access');
+logger.info({ facilitator: facilitator.url, publicUrl: facilitator.publicUrl }, 'Topology (b): the merchant has no chain access');
 
 // ── validation ───────────────────────────────────────────────────────────────
 const txHashSchema = z.string().regex(/^0x[0-9a-fA-F]{64}$/);
@@ -217,16 +217,16 @@ app.use(express.static(path.join(__dirname, 'public'), { index: 'index.html' }))
 // ── shared helpers for talking to the facilitator ────────────────────────────
 // An unreachable facilitator is a 502 (the third-party dependency is a real cost
 // of this topology and must be visible in the response, not hidden in a 500).
-function posrednikDown(req, res, r) {
+function facilitatorDown(req, res, r) {
   req.log.error({ err: r.error, facilitator: facilitator.url }, 'facilitator unreachable');
   return fin(req, res).status(502).json({ error: 'Facilitator unreachable', message: r.error, facilitator: facilitator.url });
 }
 // Open a payment request at the facilitator and build the 402 response (arrows M→F and M→C).
-async function izziv402(req, res, { resource, amountWei, message }) {
+async function challenge402(req, res, { resource, amountWei, message }) {
   let payer = req.headers['x-payer'] || req.query.payer || null;
   if (payer) { try { payer = ethers.getAddress(payer); } catch { payer = null; } }
   const r = track(req, await facilitator.paymentRequest({ resource, recipient: RECEIVER, amountWei: amountWei.toString(), currency: 'ETH', network: NETWORK, payerAddress: payer, ttlSeconds: REQ_TTL }));
-  if (r.status === 0) return posrednikDown(req, res, r);
+  if (r.status === 0) return facilitatorDown(req, res, r);
   if (r.status !== 201) return fin(req, res).status(502).json({ error: 'Facilitator did not open the payment request', status: r.status, details: r.data });
   const info = r.data.paymentInfo;
   linkSid(req, 'request_id', r.data.requestId);
@@ -239,9 +239,9 @@ async function izziv402(req, res, { resource, amountWei, message }) {
   });
 }
 // Redeem the proof token at the facilitator (arrow M→F). `consume:false` = view only.
-async function preveriDokazilo(req, res, { token, resource, consume }) {
+async function verifyProof(req, res, { token, resource, consume }) {
   const r = track(req, await facilitator.verifyProof({ token: String(token).slice(0, 120), resource, consume }));
-  if (r.status === 0) { posrednikDown(req, res, r); return null; }
+  if (r.status === 0) { facilitatorDown(req, res, r); return null; }
   if (r.status !== 200 || !r.data || r.data.verified !== true) {
     const code = (r.status === 403 || r.status === 409) ? r.status : 502;
     fin(req, res).status(code).json({ error: (r.data && r.data.error) || 'Proof was not verified' });
@@ -264,7 +264,7 @@ app.get('/config', async (req, res) => {
   fin(req, res).json({
     topology: 'facilitator', network: NETWORK, chainId: NETWORK === 'sepolia' ? '0xaa36a7' : null,
     receiver: RECEIVER, mockVerify: MOCK_VERIFY, rpcUrl: RPC_URL, ethEurRate: ETH_EUR_RATE, hasPayerKey: !!PAYER_PK,
-    facilitator: { url: facilitator.publicUrl, submitPath: '/submit-payment', dosegljiv: !!pcfg, mockVerify: pcfg ? pcfg.mockVerify : null },
+    facilitator: { url: facilitator.publicUrl, submitPath: '/submit-payment', reachable: !!pcfg, mockVerify: pcfg ? pcfg.mockVerify : null },
     single: { resource: RES_SINGLE, priceEth: SERVICE_PRICE_ETH, priceWei: SERVICE_PRICE_WEI.toString(), priceEurApprox: (parseFloat(SERVICE_PRICE_ETH) * ETH_EUR_RATE).toFixed(4) },
     tx: { resource: RES_TX, priceWei: PRICE_WEI_PER_READING.toString(), priceEth: ethers.formatEther(PRICE_WEI_PER_READING) },
     metered: { resource: RES_METERED, priceWeiPerCall: PRICE_WEI_PER_CALL.toString(), priceWeiPerByte: PRICE_WEI_PER_BYTE.toString(), minPriceWei: MIN_PRICE_WEI.toString(), sessionTtlDefault: SESSION_TTL_DEFAULT }
@@ -277,7 +277,7 @@ app.get('/session', (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   fin(req, res).json({
     success: true, session,
-    pravilo: 'sid is correlation only. A missing or changed sid (e.g. after a network/IP change) does not cause a denial. Identity = wallet + one-time tokens, not the IP address.'
+    policy: 'sid is correlation only. A missing or changed sid (e.g. after a network/IP change) does not cause a denial. Identity = wallet + one-time tokens, not the IP address.'
   });
 });
 
@@ -291,9 +291,9 @@ app.get('/health', async (req, res) => {
   fin(req, res).status(dbOk ? 200 : 503).json({
     status: dbOk ? 'ok' : 'down', topology: 'facilitator', receiver: RECEIVER,
     chain: 'no access (facilitator only)', mockVerify: MOCK_VERIFY,
-    facilitator: pOk ? 'ok' : 'down', posrednikUrl: facilitator.url,
-    posrednikRpc: pOk && h.data ? h.data.rpc : null,
-    posrednikMockVerify: pMock,
+    facilitator: pOk ? 'ok' : 'down', facilitatorUrl: facilitator.url,
+    facilitatorRpc: pOk && h.data ? h.data.rpc : null,
+    facilitatorMockVerify: pMock,
     // If the two modes differ, the branch is inconsistent: the merchant would e.g. send
     // real transactions to a facilitator that never verifies them. Better loud than silent.
     mockMismatch: pMock === null ? null : (pMock !== MOCK_VERIFY)
@@ -305,9 +305,9 @@ app.get('/single/config', (req, res) => fin(req, res).json({ network: NETWORK, c
 
 app.get('/single/service', async (req, res) => {
   const proofToken = req.headers['x-payment'] || req.headers['x-payment-proof'];
-  if (!proofToken) return izziv402(req, res, { resource: RES_SINGLE, amountWei: SERVICE_PRICE_WEI, message: 'Payment is required to access this service.' });
+  if (!proofToken) return challenge402(req, res, { resource: RES_SINGLE, amountWei: SERVICE_PRICE_WEI, message: 'Payment is required to access this service.' });
   // View without consuming (same as the direct branch): GET tells whether the proof is valid.
-  const v = await preveriDokazilo(req, res, { token: proofToken, resource: RES_SINGLE, consume: false });
+  const v = await verifyProof(req, res, { token: proofToken, resource: RES_SINGLE, consume: false });
   if (!v) return;
   fin(req, res).json({ success: true, authorized: true, proofToken, resource: v.resource, consumed: !!v.consumed, payment: { verified: true, txHash: v.txHash, blockNumber: v.blockNumber } });
 });
@@ -316,7 +316,7 @@ app.post('/single/service', async (req, res) => {
   const proofToken = req.headers['x-payment'] || req.headers['x-payment-proof'];
   if (!proofToken) return fin(req, res).status(402).json({ error: 'Payment Required', message: 'Missing X-Payment header' });
   const prompt = (req.body && typeof req.body.prompt === 'string') ? req.body.prompt.slice(0, 4000) : 'hello';
-  const v = await preveriDokazilo(req, res, { token: proofToken, resource: RES_SINGLE, consume: true });
+  const v = await verifyProof(req, res, { token: proofToken, resource: RES_SINGLE, consume: true });
   if (!v) return;
   notePayer(req, v.payer); linkSid(req, 'proof_token', String(proofToken));
   fin(req, res).json({ success: true, response: `Protected service response. Your prompt: "${prompt}". (demo mode)`, model: 'demo', payment: { txHash: v.txHash, blockNumber: v.blockNumber } });
@@ -325,21 +325,21 @@ app.post('/single/service', async (req, res) => {
 // ════════════════════════════ 2) TX (per reading, M2M) ══════════════════════
 app.get('/tx/reading', async (req, res) => {
   const proofToken = req.headers['x-payment'] || req.headers['x-payment-proof'];
-  if (!proofToken) return izziv402(req, res, { resource: RES_TX, amountWei: PRICE_WEI_PER_READING, message: 'Payment is required for a sensor reading.' });
-  const v = await preveriDokazilo(req, res, { token: proofToken, resource: RES_TX, consume: true });
+  if (!proofToken) return challenge402(req, res, { resource: RES_TX, amountWei: PRICE_WEI_PER_READING, message: 'Payment is required for a sensor reading.' });
+  const v = await verifyProof(req, res, { token: proofToken, resource: RES_TX, consume: true });
   if (!v) return;
   notePayer(req, v.payer); linkSid(req, 'proof_token', String(proofToken));
   fin(req, res).json({ success: true, reading: nextReading(), payment: { verified: true, txHash: v.txHash, blockNumber: v.blockNumber } });
 });
 
 // ── dropped routes (the payment is reported to the facilitator, not the merchant) ──
-const napotiNaPosrednika = (req, res) => fin(req, res).status(404).json({
+const redirectToFacilitator = (req, res) => fin(req, res).status(404).json({
   error: 'This route does not exist in the facilitator topology',
-  navodilo: `Report the payment to the facilitator: POST ${facilitator.publicUrl}/submit-payment { requestId, txHash, payerAddress }`,
+  instructions: `Report the payment to the facilitator: POST ${facilitator.publicUrl}/submit-payment { requestId, txHash, payerAddress }`,
   protocol: 'facilitator flow — arrow C→F (payer → facilitator)'
 });
-app.post('/single/verify', napotiNaPosrednika);
-app.post('/tx/verify', napotiNaPosrednika);
+app.post('/single/verify', redirectToFacilitator);
+app.post('/tx/verify', redirectToFacilitator);
 
 // ════════════════════════════ 3) METERED (session, M2M) ═════════════════════
 // The client interface is DELIBERATELY the same as in the direct branch (same routes,
@@ -355,7 +355,7 @@ app.post('/metered/session/open', async (req, res) => {
     budgetWei, ttlSeconds: ttlSeconds || SESSION_TTL_DEFAULT,
     mockDepositWei: mockDepositWei || (PRICE_WEI_PER_CALL * 25n).toString()
   }));
-  if (r.status === 0) return posrednikDown(req, res, r);
+  if (r.status === 0) return facilitatorDown(req, res, r);
   if (r.status !== 200) return fin(req, res).status(r.status >= 400 && r.status < 500 ? r.status : 502).json(r.data || { error: 'Facilitator did not open the session' });
   linkSid(req, 'metered_session', r.data.session.sessionId); notePayer(req, r.data.session.payer);
   fin(req, res).json({ success: true, session: r.data.session, transaction: r.data.transaction });
@@ -363,7 +363,7 @@ app.post('/metered/session/open', async (req, res) => {
 
 app.get('/metered/session/:id', async (req, res) => {
   const r = track(req, await facilitator.sessionView(String(req.params.id)));
-  if (r.status === 0) return posrednikDown(req, res, r);
+  if (r.status === 0) return facilitatorDown(req, res, r);
   if (r.status === 404) return fin(req, res).status(404).json({ error: 'Session does not exist' });
   if (r.status !== 200) return fin(req, res).status(502).json(r.data || { error: 'Facilitator did not return the session' });
   fin(req, res).json({ success: true, session: r.data.session });
@@ -386,7 +386,7 @@ app.get('/metered/reading-metered', async (req, res) => {
   if (price > BigInt(maxWei)) return fin(req, res).status(400).json({ error: 'Price exceeds the signed maximum', priceWei: price.toString(), maxWei });
 
   const r = track(req, await facilitator.debit({ sessionId: String(sessionId).slice(0, 120), payer: String(payer), nonce: String(nonce).slice(0, 120), signature: String(signature), path: RES_METERED, maxWei: String(maxWei), priceWei: price.toString(), bytes }));
-  if (r.status === 0) return posrednikDown(req, res, r);
+  if (r.status === 0) return facilitatorDown(req, res, r);
   if (r.status !== 200 || !r.data || r.data.authorized !== true) {
     const code = (r.status >= 400 && r.status < 500) ? r.status : 502;
     return fin(req, res).status(code).json(r.data || { error: 'Facilitator did not authorize the debit' });
@@ -418,7 +418,7 @@ app.get('/run/token', (req, res) => {
 // same bug came from a hard-coded `tx.wait(1)`.
 async function runnerBase() {
   const pcfg = await facilitator.config();
-  return { baseURL: `http://127.0.0.1:${PORT}`, posrednikURL: facilitator.url, network: NETWORK, rpcUrl: RPC_URL,
+  return { baseURL: `http://127.0.0.1:${PORT}`, facilitatorUrl: facilitator.url, network: NETWORK, rpcUrl: RPC_URL,
     mock: MOCK_VERIFY, payerPk: PAYER_PK, receiver: RECEIVER, adminToken: auth.token(),
     confirmations: (pcfg && pcfg.minConfirmations) || 1 };
 }
@@ -490,7 +490,7 @@ if (x402.enabled) {
     const pcfg = await facilitator.config();
     fin(req, res).json({
       ...x402.summary(), facilitator: facilitator.publicUrl, supported: sup.kinds || [],
-      posrednikX402: (pcfg && pcfg.x402) || null   // this reveals the facilitator's mock mode
+      facilitatorX402: (pcfg && pcfg.x402) || null   // this reveals the facilitator's mock mode
     });
   });
 

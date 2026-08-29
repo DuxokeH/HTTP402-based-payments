@@ -251,14 +251,14 @@ app.get('/health', async (req, res) => {
     try { lastBlock = await Promise.race([provider.getBlockNumber(), new Promise((_, r) => setTimeout(() => r(new Error('t/o')), 2000))]); rpcOk = true; } catch {}
   }
   done(req, res).status(dbOk ? 200 : 503).json({
-    status: dbOk ? 'ok' : 'down', vloga: 'facilitator', network: NETWORK,
+    status: dbOk ? 'ok' : 'down', role: 'facilitator', network: NETWORK,
     mockVerify: MOCK_VERIFY, rpc: rpcOk ? 'ok' : 'down', lastBlock,
     minConfirmations: MIN_CONFIRMATIONS, chainReadsInFlight
   });
 });
 
 app.get('/config', (req, res) => done(req, res).json({
-  vloga: 'facilitator', protocol: 'facilitator-mediated (payment-request / submit-payment / verify-proof)',
+  role: 'facilitator', protocol: 'facilitator-mediated (payment-request / submit-payment / verify-proof)',
   network: NETWORK, chainId: NETWORK === 'sepolia' ? '0xaa36a7' : null,
   mockVerify: MOCK_VERIFY, minConfirmations: MIN_CONFIRMATIONS,
   proofTtlSeconds: PROOF_TTL, requestTtlSeconds: REQ_TTL,
@@ -322,7 +322,7 @@ app.post('/submit-payment', async (req, res, next) => {
   if (!tx.to || tx.to.toLowerCase() !== pr.recipient.toLowerCase()) return done(req, res).status(400).json({ error: 'Wrong recipient' });
   if (tx.from.toLowerCase() !== payerAddress.toLowerCase()) return done(req, res).status(400).json({ error: 'Payer mismatch' });
   // BUG 3: the comparison is done in integers (wei), not `parseFloat` over ETH.
-  if (BigInt(tx.value) < amountWei) return done(req, res).status(400).json({ error: 'Amount too low', zahtevanoWei: amountWei.toString(), placanoWei: tx.value });
+  if (BigInt(tx.value) < amountWei) return done(req, res).status(400).json({ error: 'Amount too low', requiredWei: amountWei.toString(), paidWei: tx.value });
   if (pr.payer_address && pr.payer_address.toLowerCase() !== tx.from.toLowerCase()) return done(req, res).status(400).json({ error: 'Payer does not match the payment request' });
 
   const proofToken = `proof_${uuidv4()}`;
@@ -552,7 +552,7 @@ if (x402.enabled) {
       network: row.network, asset: row.asset, amountAtomic: row.amount_atomic,
       payer: row.payer, payTo: row.pay_to, txHash: row.tx_hash,
       block: row.block_number, gasUnits: row.gas_used, gasPriceWei: row.effective_gas_price,
-      poskusi: row.attempt
+      attempts: row.attempt
     });
   });
 

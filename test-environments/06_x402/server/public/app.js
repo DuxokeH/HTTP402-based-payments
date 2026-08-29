@@ -3,7 +3,7 @@
 // in, the client AUTOMATICALLY POSTs {requestId, txHash, ...} + prompt to
 // /service and receives content AND the proof token in one 200 response.
 // The proof token is saved to sessionStorage; a later GET /service with the
-// X-Payment header returns the server's acknowledgment that the payment was
+// X-Payment header returns the server's confirmation that the payment was
 // already made (no second payment).
 import {
   createWalletClient, createPublicClient, custom, http,
@@ -12,7 +12,7 @@ import {
 import { sepolia } from 'https://esm.sh/viem@2.21.40/chains';
 
 const $ = (id) => document.getElementById(id);
-const PROOF_KEY = 'x402_zdruzena_proof';
+const PROOF_KEY = 'x402_merged_proof';
 let cfg = null, walletClient = null, publicClient = null, account = null;
 const STEPS = ['step-request', 'step-pay', 'step-merged'];
 const setStep = (id, s) => { const el = $(id); if (!el) return; el.classList.remove('active', 'done', 'fail'); if (s) el.classList.add(s); };
@@ -106,7 +106,7 @@ async function pay() {
     const chal = await fetch(`/service?payer=${account}`, { headers: { 'X-Payer': account } });
     if (chal.status !== 402) throw new Error(`Expected 402, got ${chal.status}`);
     const { payment } = await chal.json();
-    T.izziv = now() - s; $('t-izziv').textContent = ms(T.izziv);
+    T.challenge = now() - s; $('t-challenge').textContent = ms(T.challenge);
     setStep('step-request', 'done');
 
     // 2 — send tx + wait (outside HTTP)
@@ -114,7 +114,7 @@ async function pay() {
     s = now();
     const hash = await walletClient.sendTransaction({ account, to: getAddress(payment.to), value: parseEther(payment.amount) });
     await publicClient.waitForTransactionReceipt({ hash });
-    T.potrditev = now() - s; $('t-potrditev').textContent = ms(T.potrditev);
+    T.confirm = now() - s; $('t-confirm').textContent = ms(T.confirm);
     setStep('step-pay', 'done');
 
     // 3 — MERGED exchange (messages 3 and 4): the tx hash from MetaMask goes
@@ -127,10 +127,10 @@ async function pay() {
     });
     const json = await res.json();
     if (!res.ok) { setStep('step-merged', 'fail'); throw new Error(json.message || json.error || 'The merged exchange failed'); }
-    T.zdruzeno = now() - s; $('t-zdruzeno').textContent = ms(T.zdruzeno);
+    T.merged = now() - s; $('t-merged').textContent = ms(T.merged);
     setStep('step-merged', 'done');
 
-    T.skupaj = now() - T0; $('t-skupaj').innerHTML = `<strong>${ms(T.skupaj)}</strong>`;
+    T.total = now() - T0; $('t-total').innerHTML = `<strong>${ms(T.total)}</strong>`;
     $('result').textContent = json.response;
     const explorer = `https://sepolia.etherscan.io/tx/${hash}`;
     $('tx-link').href = explorer;

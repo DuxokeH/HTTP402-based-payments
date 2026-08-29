@@ -4,7 +4,7 @@
   "NETWORK": "sepolia",
   "RPC_URL": "https://ethereum-sepolia-rpc.publicnode.com",
   "CONFIRMATIONS": 1,
-  "_note": "MERCHANT_URL pove, KAM merilnik pošilja zahteve — ni identiteta (glej razdelek 1 v ../../docs/IDENTITY.md).",
-  "_note_hostname": "Priporočeno je ime gostitelja namesto IP naslova (npr. http://x402.tvoja-domena.si:3300): ob menjavi IP strežnika ni treba spreminjati konfiguracije. Vrednost lahko nastaviš tudi z okoljsko spremenljivko MERCHANT_URL, ki ima prednost pred to datoteko: MERCHANT_URL=http://x402.tvoja-domena.si:3300 npm run mock",
-  "_note_wireshark": "Za zajem v Wiresharku uporabi http:// (brez TLS), sicer 402 in X-Payment v zajemu niso vidni. Združeni tok ima na žici natanko DVA para zahteva/odgovor."
+  "_note": "MERCHANT_URL says WHERE the measurement client sends requests — it is not an identity (see section 1 in ../../docs/IDENTITY.md).",
+  "_note_hostname": "A hostname is recommended instead of an IP address (e.g. http://x402.your-domain.example:3300): when the server's IP changes, the configuration does not need to be changed. You can also set the value with the MERCHANT_URL environment variable, which takes precedence over this file: MERCHANT_URL=http://x402.your-domain.example:3300 npm run mock",
+  "_note_wireshark": "For a capture in Wireshark use http:// (without TLS), otherwise the 402 and X-Payment are not visible in the capture. The merged flow has exactly TWO request/response pairs on the wire."
 }

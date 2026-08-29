@@ -69,8 +69,8 @@ flow, described below, and not the official x402 flow:
 | | **implemented here** | official x402 — not implemented |
 |---|---|---|
 | paths | `payment-request` → `submit-payment` → `verify-proof` | `verify` + `settle` |
-| who pays the gas | the **payer**, for their own transaction | the **facilitator**, which submits an EIP-3009 authorisation |
-| the facilitator's role on chain | **reads** only | **writes** — submits the authorisation |
+| who pays the gas | the **payer**, for their own transaction | the **facilitator**, which submits an EIP-3009 authorization |
+| the facilitator's role on chain | **reads** only | **writes** — submits the authorization |
 | asset / network | native ETH on Ethereum Sepolia | EIP-3009 token (e.g. USDC/EURC) |
 
 This facilitator flow was chosen because it stays comparable with the direct branch, because it
@@ -166,7 +166,7 @@ cd facilitator && npm ci && cp .env.example .env && cd ..
 
 # merchant
 cd server && npm ci && cp .env.example .env
-cp wallet.example.json wallet.json      # enter YOUR OWN receiver address
+cp wallet.example.json wallet.json      # enter YOUR OWN recipient address
 cd ..
 
 # measurement agent
@@ -178,7 +178,7 @@ cd agent && npm ci && cd ..
 
 Wallets:
 
-- the **merchant** needs `server/wallet.json` with the receiver address, otherwise it will not
+- the **merchant** needs `server/wallet.json` with the recipient address, otherwise it will not
   start; no private key is needed there (do not put one in for mock mode).
 - the **facilitator has no wallet** — it only reads the chain. `facilitator/wallet.example.json` is
   needed only for the settlement key of the parallel x402 mode.
@@ -215,8 +215,8 @@ grep TOKEN facilitator/data/admin-credentials.txt   # → FACILITATOR_TOKEN in s
 The website's admin password (the two components have **separate** logins):
 
 ```bash
-grep GESLO server/data/admin-credentials.txt    # login to the merchant website
-grep GESLO facilitator/data/admin-credentials.txt   # the facilitator's separate login
+grep PASSWORD server/data/admin-credentials.txt    # login to the merchant website
+grep PASSWORD facilitator/data/admin-credentials.txt   # the facilitator's separate login
 ```
 
 Check that the branch is consistent:
@@ -271,7 +271,7 @@ For the direct branch, do the same with a single counter in front of folder 05 (
 running there on 8080):
 
 ```bash
-node count-proxy.js --listen=3101 --target=http://127.0.0.1:8080 --tag=neposredno
+node count-proxy.js --listen=3101 --target=http://127.0.0.1:8080 --tag=direct
 ```
 
 Expected: **5 exchanges / 10 messages for the facilitator branch**, **3 / 6 for the direct one**. The
@@ -334,7 +334,7 @@ A real run requires **a funded test wallet**; without one it cannot be carried o
 
 1. Put the private key of a funded Sepolia wallet into `agent/wallet.json`
    (`cp wallet.example.json wallet.json`). Test ETH comes from a public faucet.
-2. Put the receiver address into `server/wallet.json` (it can be another wallet of yours).
+2. Put the recipient address into `server/wallet.json` (it can be another wallet of yours).
 3. Set `MOCK_VERIFY=false` and a working `RPC_URL` in **both** `.env` files
    (`facilitator/.env` is the only place where `RPC_URL` is actually used; the merchant's is only a
    hint that it passes on to the payer).
@@ -403,7 +403,7 @@ with folder 05.
 ```bash
 cp facilitator/.env.example facilitator/.env
 cp server/.env.example  server/.env
-cp server/wallet.example.json server/wallet.json   # enter the receiver address
+cp server/wallet.example.json server/wallet.json   # enter the recipient address
 # put your own domain into the Caddyfile (it is written as your-domain.example by default)
 
 docker compose up -d facilitator
@@ -468,9 +468,9 @@ CSV and JSON in `measurements/` (on checkout the folder holds no results — onl
 | `facilitator_metered_mock.csv` / `facilitator_metered_real.csv` | `agent.js --metered` (metered session) |
 | `facilitator_tx_*_summary.json`, `facilitator_metered_*_summary.json` | the same — condensed run statistics |
 | `facilitator_security.csv` | `agent.js --security` (columns `test,expected,actual,passed`) |
-| `e9_merchant.csv`, `e9_facilitator.csv`, `e9_neposredno.csv` | `count-proxy.js --tag=<tag>` → `e9_<tag>.csv` |
+| `e9_merchant.csv`, `e9_facilitator.csv`, `e9_direct.csv` | `count-proxy.js --tag=<tag>` → `e9_<tag>.csv` |
 | `x402_facilitator_tx_mock.csv` | `agent.js --x402` (no `_summary.json`) |
-| `x402_facilitator_varnost.csv` | `agent.js --x402 --security` |
+| `x402_facilitator_security.csv` | `agent.js --x402 --security` |
 
 > **Measurement CSVs are APPENDED TO, not overwritten.** Delete the old file before repeating the
 > same experiment, otherwise two runs merge into one and the analysis treats them as a single
@@ -555,7 +555,7 @@ leaves the merchant untouched.
 
 | Symptom | Cause and fix |
 |---|---|
-| the merchant stops at startup with `Copy wallet.example.json -> wallet.json` | `server/wallet.json` with the receiver address is missing |
+| the merchant stops at startup with `Copy wallet.example.json -> wallet.json` | `server/wallet.json` with the recipient address is missing |
 | `/health` returns `"facilitator": "down"` | the facilitator is not running, or `FACILITATOR_URL` is wrong — **start the facilitator first** |
 | `/health` returns `"mockMismatch": true` | `MOCK_VERIFY` differs between the merchant and the facilitator; make both `.env` files agree |
 | the merchant returns 401 on everything except `/health`, `/login` and `/logout` | the agent is missing the merchant's `ADMIN_TOKEN` (not the facilitator's) |

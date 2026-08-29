@@ -50,13 +50,13 @@ def main():
         mark_sample(True)
     print(f"Source: {csv_path}  ·  mode={mode}  ·  debits={len(deb)}")
 
-    # ── Figure 1: debit latency (sign + request) ─────────────────────────
+    # ── Figure 1: debit latency (sign + request) ─────────────────────────────
     fig, ax = plt.subplots(figsize=(8, 4.4))
     ax.bar(deb["idx"], deb["t_sign_ms"], color=AQUA, label=t("t_sign (client)", "t_podpis (odjemalec)"), width=0.7)
     ax.bar(deb["idx"], deb["t_request_ms"], bottom=deb["t_sign_ms"], color=BLUE, label=t("t_request (network+server)", "t_zahteva (omrežje+strežnik)"), width=0.7)
-    skupaj = (deb["t_sign_ms"] + deb["t_request_ms"])
-    med = float(skupaj.median())
-    ax.axhline(med, color=MUTED, linestyle="--", linewidth=1, label=t(f"total median ≈ {med:.2f} ms", f"mediana skupaj ≈ {med:.2f} ms"))
+    total = (deb["t_sign_ms"] + deb["t_request_ms"])
+    med = float(total.median())
+    ax.axhline(med, color=MUTED, linestyle="--", linewidth=1, label=t(f"median total ≈ {med:.2f} ms", f"mediana skupaj ≈ {med:.2f} ms"))
     ax.set_xlabel(t("debit number", "zaporedna bremenitev")); ax.set_ylabel(t("time [ms]", "čas [ms]"))
     ax.set_title(t(f"Signed debit latency (off-chain) · mode {mode}", f"Latenca podpisane bremenitve (off-chain) · način {mode}"))
     ax.legend(loc="upper right"); clean_axes(ax)
@@ -74,7 +74,7 @@ def main():
     save(fig, os.path.join(args.out, "02_credit_consumption.png"))
 
     st = lambda s: (s.min(), s.median(), s.mean(), s.quantile(0.95), s.max())
-    mn, md, mean, p95, mx = st(skupaj.dropna())
+    mn, md, mean, p95, mx = st(total.dropna())
     print(f"  Debit latency [ms]: min={mn:.2f} median={md:.2f} mean={mean:.2f} p95={p95:.2f} max={mx:.2f}")
     print(f"  On-chain transactions in the session: 1 (top-up) for {len(deb)} readings")
     print("Done.")

@@ -11,8 +11,8 @@ if (!globalThis.crypto) globalThis.crypto = require('node:crypto').webcrypto;
  * clients), so it does not use wrapFetchWithPayment but drives the steps itself:
  *
  *   1. GET resource       → 402 + PAYMENT-REQUIRED     (t_402)
- *   2. EIP-3009 signature → PaymentPayload             (t_podpis)
- *   3. repeat GET + PAYMENT-SIGNATURE → 200 + PAYMENT-RESPONSE (t_poravnava_http)
+ *   2. EIP-3009 signature → PaymentPayload             (t_sign)
+ *   3. repeat GET + PAYMENT-SIGNATURE → 200 + PAYMENT-RESPONSE (t_payment_http)
  *
  * The client signs an AUTHORIZATION; the settlement transaction is submitted by
  * the server/facilitator, which pays the gas. The client does NOT pay gas.
@@ -118,7 +118,7 @@ async function payFlow(o) {
     } finally {
       o.client.__pid = null;
     }
-    t.tPodpis = performance.now() - t0;
+    t.tSign = performance.now() - t0;
     signedHeaders = httpClient.encodePaymentSignatureHeader(payload);
     if (o.mutateAuthorization) {
       // for negative tests: corrupt a signed field after signing
@@ -128,7 +128,7 @@ async function payFlow(o) {
       for (const k of Object.keys(signedHeaders)) signedHeaders[k] = b64;
     }
   } else {
-    t.tPodpis = 0;
+    t.tSign = 0;
   }
 
   // 3) paid request
@@ -136,7 +136,7 @@ async function payFlow(o) {
   if (o.fault) paidHeaders['X-X402-Mock-Fault'] = o.fault;
   t0 = performance.now();
   const res = await fetch(o.url, { method: o.method || 'GET', headers: paidHeaders, ...bodyInit });
-  t.tPoravnavaHttp = performance.now() - t0;
+  t.tPaymentHttp = performance.now() - t0;
 
   const paymentResponse = readPaymentResponseHeader(res);
   const serverMs = parseFloat(res.headers.get('X-Server-Ms') || '') || null;

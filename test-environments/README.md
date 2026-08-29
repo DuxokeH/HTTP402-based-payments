@@ -83,7 +83,7 @@ Because you run the experiments one after another, there are no overlapping tran
 server, so its exposure must not compromise the measurement wallet as well.
 
 The payments themselves are worth next to nothing (`1e-7` ETH by default) — **gas dominates**:
-21 000 units per transfer, which at 20 gwei comes to roughly `0,00042` ETH. A single top-up from a
+21 000 units per transfer, which at 20 gwei comes to roughly `0.00042` ETH. A single top-up from a
 public Sepolia faucet is enough for many runs.
 
 > Use **a dedicated test wallet and nothing else**. Never enter the key of a wallet that holds real
@@ -170,7 +170,7 @@ human-readable copy to `data/admin-credentials.txt` (mode `0600`; the `data/` fo
 `admin.json` is missing or corrupt.
 
 ```bash
-grep GESLO data/admin-credentials.txt      # browser login at /login
+grep PASSWORD data/admin-credentials.txt   # browser login at /login
 grep TOKEN data/admin-credentials.txt      # machine token for the measurement agents
 ```
 
