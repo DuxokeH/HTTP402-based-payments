@@ -1,0 +1,36 @@
+{
+  "name": "x402-spletisce-neposredno",
+  "version": "1.0.0",
+  "description": "X402 showcase site — one-time (MetaMask) + 20-tx M2M + metered session, live SSE dashboard",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "NODE_ENV=development node server.js",
+    "mock": "NODE_ENV=development MOCK_VERIFY=true node server.js",
+    "build:klient": "esbuild src/x402-klient-vir.js --bundle --minify --format=iife --outfile=public/x402-klient.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@x402/core": "^2.23.0",
+    "@x402/evm": "^2.23.0",
+    "@x402/express": "^2.23.0",
+    "@x402/extensions": "^2.23.0",
+    "@x402/fetch": "^2.23.0",
+    "axios": "^1.6.0",
+    "better-sqlite3": "^11.3.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
+    "ethers": "^6.9.0",
+    "express": "^4.18.2",
+    "helmet": "^7.1.0",
+    "pino": "^9.4.0",
+    "pino-pretty": "^11.2.2",
+    "uuid": "^9.0.1",
+    "viem": "^2.55.19",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}

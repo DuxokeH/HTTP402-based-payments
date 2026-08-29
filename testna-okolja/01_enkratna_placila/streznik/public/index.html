@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="sl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>X402 — Enkratno plačilo (MetaMask)</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <h1>X402 · Enkratno mikroplačilo</h1>
+      <p class="tagline">Plačaj drobiž testnega ETH, odkleni eno storitev. Brez posrednika.</p>
+    </header>
+
+    <section id="config-card" class="card">
+      <div class="row"><span class="label">Omrežje</span><span id="cfg-network" class="value">—</span></div>
+      <div class="row"><span class="label">Prejemnik (ponudnik)</span><span id="cfg-merchant" class="value mono">—</span></div>
+      <div class="row"><span class="label">Cena zahteve</span><span id="cfg-price" class="value">—</span></div>
+      <div class="row"><span class="label">Model / storitev</span><span id="cfg-model" class="value">—</span></div>
+    </section>
+
+    <section class="card">
+      <h2>1. Poveži denarnico</h2>
+      <button id="connect-btn">Poveži MetaMask</button>
+      <p id="wallet-status" class="status">Ni povezano</p>
+    </section>
+
+    <section class="card">
+      <h2>2. Zahtevaj storitev</h2>
+      <textarea id="prompt" rows="4" placeholder="Vpiši poziv…"></textarea>
+      <button id="pay-btn" disabled>Plačaj in pošlji</button>
+      <div id="progress" class="progress hidden">
+        <ol>
+          <li id="step-request">Plačilni izziv (402)</li>
+          <li id="step-pay">Transakcija na Sepolia</li>
+          <li id="step-verify">Preverjanje na verigi</li>
+          <li id="step-ai">Dostop do storitve</li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="timing-card" class="card hidden">
+      <h2>Meritve (brskalnik)</h2>
+      <table class="timing">
+        <tbody>
+          <tr><td>t_izziv (402)</td><td id="t-izziv" class="mono">—</td></tr>
+          <tr><td>t_potrditev (blok)</td><td id="t-potrditev" class="mono">—</td></tr>
+          <tr><td>t_preverjanje</td><td id="t-preverjanje" class="mono">—</td></tr>
+          <tr><td>t_dostop</td><td id="t-dostop" class="mono">—</td></tr>
+          <tr><td><strong>t_skupaj</strong></td><td id="t-skupaj" class="mono"><strong>—</strong></td></tr>
+        </tbody>
+      </table>
+      <p class="meta">Za slikovni dokaz poteka vzporedno zajemaj promet z Wiresharkom (filter <code>http</code>).</p>
+    </section>
+
+    <section id="result-card" class="card hidden">
+      <h2>Odgovor storitve</h2>
+      <pre id="result"></pre>
+      <p class="meta">Transakcija: <a id="tx-link" target="_blank" rel="noopener">poglej na Etherscan</a></p>
+    </section>
+
+    <section id="error-card" class="card error hidden">
+      <h2>Napaka</h2>
+      <p id="error-msg"></p>
+    </section>
+
+    <!-- x402 v2 (vzporedni način): uradni protokol, ETH — testno, Ethereum Sepolia -->
+    <section id="x402-card" class="card">
+      <h2>x402 v2 — plačilo s pooblastilom (ETH — testno, Ethereum Sepolia)</h2>
+      <p class="meta">Vzporedni način: MetaMask podpiše <b>EIP-3009 pooblastilo</b> (brez transakcije, brez gasa pri plačniku); strežnik plačilo sam preveri in <b>sam poravna</b> (v testnem načinu sintetično; zneski v ETH). Zgornji tok (domači ETH na Sepoliji) ostane nespremenjen.</p>
+      <div class="row"><span>Stanje</span><span id="x-status">—</span></div>
+      <button id="x-connect" type="button">Poveži MetaMask (Ethereum Sepolia)</button>
+      <button id="x-pay" type="button" disabled>Plačaj z x402</button>
+      <pre id="x-result" class="hidden"></pre>
+    </section>
+
+    <footer>
+      <p>Zgrajeno na ideji protokola x402 · plačila neposredno na Sepolia testnem omrežju — brez posrednika (facilitatorja).</p>
+    </footer>
+  </main>
+
+  <script type="module" src="/app.js"></script>
+  <script src="/x402-klient.js"></script>
+  <script type="module" src="/x402-ui.js"></script>
+</body>
+</html>

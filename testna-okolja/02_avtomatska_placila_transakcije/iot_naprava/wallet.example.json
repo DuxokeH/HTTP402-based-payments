@@ -1,0 +1,7 @@
+{
+  "_opomba": "IoT NAPRAVA (ponudnik odčitkov) — potrebuje SAMO naslov, ki PREJEMA plačila; privatnega ključa in sredstev ne. To je 'druga denarnica'. Po README.md ta program teče na STREŽNIKU. Kopiraj v wallet.json in vpiši njen naslov.",
+  "address": "0x0000000000000000000000000000000000000000",
+  "_opomba_x402": "x402 v2 (vzporedni način, testna ETH konfiguracija): x402SettlerPrivateKey je PORAVNALNI ključ strežnika/posrednika (v mock načinu ni potreben; pravi tek bi zahteval žeton z EIP-3009 in ETH za gas — NIKOLI ga ne deli in ne nalagaj v git). x402Address je neobvezni prejemnik (payTo); brez njega se uporabi 'address'.",
+  "x402Address": "",
+  "x402SettlerPrivateKey": ""
+}

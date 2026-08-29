@@ -1,0 +1,65 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Caddy (reverse-proxy s TLS) za mapo 05_spletisce
+#  docs/IDENTITETA.md §2, izboljšava A
+#
+#  Zakaj: `proofToken` je „bearer" žeton — kdor ga ima, dostopa. Po navadnem HTTP
+#  na javnem omrežju ga je mogoče prestreči. Pravi popravek je TLS, NE vezava
+#  dostopa na IP naslov (razlogi v docs/IDENTITETA.md §0).
+#
+#  Uporaba:
+#    1) `tvoja-domena.si` spodaj zamenjaj s pravo domeno, ki kaže na ta strežnik.
+#    2) Odpri vrata 80 in 443 (Caddy si sam pridobi Let's Encrypt certifikat).
+#    3) `docker compose up -d` v tej mapi.
+#
+#  POZOR (Wireshark): za slikovna dokazila poteka (402, X-Payment, X-Signature)
+#  uporabi HTTP dostop po LAN/loopbacku na vrata 8080 — pod TLS je vsebina
+#  šifrirana in v zajemu ni vidna. Glej ../../README.md.
+#  HSTS spodaj brskalniku pove, naj na TO domeno leto dni ne dostopa po http://,
+#  zato zajem delaj po naslovu IP:8080, ne po domeni.
+#
+#  ⚠ POZOR (denar): poti /run/tx in /run/merjeno sprožita vgrajenega M2M agenta.
+#  V PRAVEM načinu (MOCK_VERIFY=false, payerPrivateKey v wallet.json) porabljata pravo
+#  denarnico. Aplikacija ju zapira s skrbniško prijavo (glej ../../README.md), zato
+#  dodatna zaščita v Caddyju ni potrebna — spodnji `basic_auth` je le, če hočeš
+#  dvojno zaporo. Za javno demo je najvarneje pustiti MOCK_VERIFY=true.
+# ─────────────────────────────────────────────────────────────────────────────
+
+tvoja-domena.si {
+    encode zstd gzip
+
+    # Zaščita zaganjalnika M2M agenta pred javnostjo (glej opozorilo zgoraj).
+    # Geslo ustvariš z:  docker run --rm caddy:2-alpine caddy hash-password --plaintext 'tvoje-geslo'
+    #
+    # @zaganjalnik path /run/*
+    # basic_auth @zaganjalnik {
+    #     demo <sem-prilepi-hash>
+    # }
+
+    # Vse posreduj Node aplikaciji v docker omrežju (privzeto posluša na 8080).
+    reverse_proxy x402-spletisce-neposredno:8080 {
+        # Server-Sent Events (/run/tx, /run/merjeno) ne smejo biti medpomnjeni.
+        flush_interval -1
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        X-Content-Type-Options "nosniff"
+        -Server
+    }
+
+    log {
+        output stdout
+        format console
+        level INFO
+    }
+}
+
+# Neobvezno: lokalno preizkušanje TLS (Caddy izda samopodpisan certifikat,
+# brskalnik bo opozoril — za razvoj je to v redu).
+#
+# localhost {
+#     reverse_proxy x402-spletisce-neposredno:8080 {
+#         flush_interval -1
+#     }
+# }

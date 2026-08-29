@@ -1,0 +1,20 @@
+{
+  "name": "x402-iot-agent-transakcije",
+  "version": "1.0.0",
+  "description": "Consumer agent paying one on-chain tx per IoT reading (expensive per-payment baseline)",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node agent.js --mock --queries 20",
+    "mock": "node agent.js --mock --queries 20",
+    "real": "node agent.js --real --queries 20 --pause-ms 1500",
+    "gen-wallet": "node generate-wallet.js"
+  },
+  "dependencies": {
+    "@x402/evm": "^2.23.0",
+    "@x402/extensions": "^2.23.0",
+    "@x402/fetch": "^2.23.0",
+    "axios": "^1.6.0",
+    "ethers": "^6.9.0",
+    "viem": "^2.55.19"
+  }
+}

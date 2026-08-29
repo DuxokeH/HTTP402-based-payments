@@ -1,0 +1,8 @@
+{
+  "SERVER_IP": "127.0.0.1",
+  "MERCHANT_URL": "http://127.0.0.1:3000",
+  "ENDPOINT": "/service",
+  "NETWORK": "sepolia",
+  "RPC_URL": "https://ethereum-sepolia-rpc.publicnode.com",
+  "_opomba": "Za zajem v Wiresharku uporabi http:// (brez TLS). Za LAN demo z drugega stroja nastavi MERCHANT_URL na http://<IP-streznika>:3000. Združeni tok ima na žici natanko DVA para zahteva/odgovor."
+}

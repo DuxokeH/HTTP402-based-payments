@@ -1,0 +1,59 @@
+# Produkcijska namestitev mape 05_spletisce: Node aplikacija + Caddy s TLS.
+# docs/IDENTITETA.md §2, izboljšava A.  Vzorec je enak kot testna-okolja/00_demo/server.
+#
+#   cp .env.example .env
+#   cp wallet.example.json wallet.json
+#   # v Caddyfile vpiši svojo domeno
+#   docker compose up -d
+#
+# Za Wireshark dokaze: odkomentiraj `ports` pri storitvi x402-spletisce in
+# dostopaj po http://<IP>:8080 (mimo TLS) — glej ../../README.md.
+#
+# NE nastavljaj COOKIE_SECURE=true, če boš uporabljal tudi ta odprti HTTP dostop:
+# brskalnik piškotka z zastavico `Secure` po navadnem HTTP ne shrani, zato bi se
+# prijava vrtela v krogu. Privzeto zaznavanje je pravo za oboje — izza Caddyja
+# (X-Forwarded-Proto: https) `Secure` doda samodejno, na vratih 8080 pa ne.
+
+name: x402-neposredno
+
+services:
+  x402-spletisce-neposredno:
+    build: .
+    image: x402-spletisce-neposredno:latest
+    container_name: x402-spletisce-neposredno
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./wallet.json:/app/wallet.json:ro
+    expose:
+      - "8080"
+    # Odkomentiraj samo za zajem po navadnem HTTP (LAN/loopback):
+    # ports:
+    #   - "8080:8080"
+    networks:
+      - x402-net
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: x402-spletisce-neposredno-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - x402-spletisce-neposredno
+    networks:
+      - x402-net
+
+networks:
+  x402-net:
+
+volumes:
+  caddy_data:
+  caddy_config:

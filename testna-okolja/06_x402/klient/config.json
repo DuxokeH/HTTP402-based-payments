@@ -1,0 +1,10 @@
+{
+  "MERCHANT_URL": "http://127.0.0.1:3300",
+  "ENDPOINT": "/service",
+  "NETWORK": "sepolia",
+  "RPC_URL": "https://ethereum-sepolia-rpc.publicnode.com",
+  "CONFIRMATIONS": 1,
+  "_opomba": "MERCHANT_URL pove, KAM merilnik pošilja zahteve — ni identiteta (glej razdelek 1 v ../../docs/IDENTITETA.md).",
+  "_opomba_ime_gostitelja": "Priporočeno je ime gostitelja namesto IP naslova (npr. http://x402.tvoja-domena.si:3300): ob menjavi IP strežnika ni treba spreminjati konfiguracije. Vrednost lahko nastaviš tudi z okoljsko spremenljivko MERCHANT_URL, ki ima prednost pred to datoteko: MERCHANT_URL=http://x402.tvoja-domena.si:3300 npm run mock",
+  "_opomba_wireshark": "Za zajem v Wiresharku uporabi http:// (brez TLS), sicer 402 in X-Payment v zajemu niso vidni. Združeni tok ima na žici natanko DVA para zahteva/odgovor."
+}

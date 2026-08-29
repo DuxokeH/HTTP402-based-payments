@@ -1,0 +1,9 @@
+node_modules
+npm-debug.log
+data
+.env
+wallet.json
+Caddyfile
+docker-compose.yml
+Dockerfile
+.dockerignore

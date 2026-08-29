@@ -1,0 +1,52 @@
+# ─── Odvisnosti ──────────────────────────────────────────────────────────────
+**/node_modules/
+
+# ─── Skrivnosti — NIKOLI v git ───────────────────────────────────────────────
+# Denarnice si vsak uporabnik ustvari sam (glej README.md).
+**/wallet.json
+*.wallet.json
+**/.env
+**/.env.local
+**/.env.production
+**/.env.*.local
+*.key
+*.pem
+**/admin-credentials.txt
+
+# ─── Podatkovne baze (SQLite) ────────────────────────────────────────────────
+**/data/
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+
+# ─── Python ──────────────────────────────────────────────────────────────────
+**/.venv/
+**/venv/
+__pycache__/
+*.pyc
+
+# ─── Rezultati meritev (nastanejo ob zagonu, niso del repozitorija) ──────────
+**/meritve/*.csv
+**/meritve/*.json
+**/analiza/slike/
+**/primerjava/slike/
+*.pcapng
+*.pcap
+
+# ─── Zgrajeni svežnji ────────────────────────────────────────────────────────
+dist/
+build/
+
+# ─── Caddy ───────────────────────────────────────────────────────────────────
+**/caddy_data/
+**/caddy_config/
+
+# ─── Orodja in urejevalniki ──────────────────────────────────────────────────
+.serena/
+.claude/
+.idea/
+.vscode/
+.DS_Store
+*.log
+*.bak

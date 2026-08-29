@@ -1,0 +1,7 @@
+{
+  "_opomba": "PLAČNIK (klient). V mock načinu ni potreben. Za PRAVE meritve kopiraj v wallet.json in vpiši privatni ključ financirane Sepolia denarnice (potrebuje testni ETH za znesek + gas). NIKOLI ne deli tega ključa in ga ne nalagaj v git.",
+  "address": "0x0000000000000000000000000000000000000000",
+  "privateKey": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "_opomba_x402": "x402 v2: v testni ETH konfiguraciji (mock) denarnica NI potrebna; pravi x402 tek zahteva žeton z EIP-3009 in financiranega plačnika (gas plača strežnik). NIKOLI ne deli ključa in ga ne nalagaj v git.",
+  "x402PayerPrivateKey": ""
+}

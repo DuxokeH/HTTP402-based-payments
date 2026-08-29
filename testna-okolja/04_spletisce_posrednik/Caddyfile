@@ -1,0 +1,84 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Caddy (reverse-proxy s TLS) za mapo 04_spletisce_posrednik — POSREDNIŠKA VEJA
+#  docs/IDENTITETA.md §2, izboljšava A
+#
+#  Posebnost te veje: PLAČNIK se pogovarja z DVEMA storitvama —
+#    /            → trgovec  (402 izziv, dostop do vira)
+#    /posrednik/* → posrednik (POST /submit-payment; puščica C→F posredniškega toka)
+#
+#  Zato je posrednik tu izpostavljen pod predpono `/posrednik`. V streznik/.env
+#  ustrezno nastavi:
+#      POSREDNIK_PUBLIC_URL=https://tvoja-domena.si/posrednik
+#      POSREDNIK_URL=http://posrednik:4000
+#  Trgovec ta naslov zapiše v odgovor 402 in brskalnik ga uporabi neposredno.
+#
+#  Uporaba:
+#    1) `tvoja-domena.si` spodaj zamenjaj s pravo domeno, ki kaže na ta strežnik.
+#    2) Odpri vrata 80 in 443 (Caddy si sam pridobi Let's Encrypt certifikat).
+#    3) `docker compose up -d` v tej mapi.
+#
+#  POZOR (Wireshark): pod TLS vsebina ni vidna. Za slikovna dokazila poteka
+#  odkomentiraj `ports` v docker-compose.yml in zajemi HTTP na vratih 8081
+#  (odjemalec↔trgovec) IN 4000 (odjemalec↔posrednik). Šele oboje skupaj pokaže
+#  vseh 5 izmenjav posredniškega toka. Glej ../README.md.
+#  HSTS spodaj brskalniku pove, naj na TO domeno leto dni ne dostopa po http://,
+#  zato zajem delaj po naslovu IP:8081 in IP:4000, ne po domeni.
+#
+#  ⚠ POZOR (denar): poti /run/tx in /run/merjeno sprožita vgrajenega M2M agenta.
+#  V PRAVEM načinu porabljata pravo denarnico. Aplikacija ju zapira s skrbniško
+#  prijavo (glej ../README.md). Za javno demo pusti MOCK_VERIFY=true.
+# ─────────────────────────────────────────────────────────────────────────────
+
+tvoja-domena.si {
+    encode zstd gzip
+
+    # ── Posrednik pod predpono /posrednik ────────────────────────────────────
+    # `handle_path` predpono odstrani, zato posrednik vidi /submit-payment in ne
+    # /posrednik/submit-payment — njegove poti ostanejo nespremenjene.
+    handle_path /posrednik/* {
+        reverse_proxy posrednik:4000
+    }
+
+    # ── Vse ostalo trgovcu ───────────────────────────────────────────────────
+    handle {
+        # Zaščita zaganjalnika M2M agenta pred javnostjo (glej opozorilo zgoraj).
+        # Geslo ustvariš z:  docker run --rm caddy:2-alpine caddy hash-password --plaintext 'tvoje-geslo'
+        #
+        # @zaganjalnik path /run/*
+        # basic_auth @zaganjalnik {
+        #     demo <sem-prilepi-hash>
+        # }
+
+        reverse_proxy trgovec:8081 {
+            # Server-Sent Events (/run/tx, /run/merjeno) ne smejo biti medpomnjeni.
+            flush_interval -1
+        }
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        X-Content-Type-Options "nosniff"
+        -Server
+    }
+
+    log {
+        output stdout
+        format console
+        level INFO
+    }
+}
+
+# Neobvezno: lokalno preizkušanje TLS (Caddy izda samopodpisan certifikat,
+# brskalnik bo opozoril — za razvoj je to v redu).
+#
+# localhost {
+#     handle_path /posrednik/* {
+#         reverse_proxy posrednik:4000
+#     }
+#     handle {
+#         reverse_proxy trgovec:8081 {
+#             flush_interval -1
+#         }
+#     }
+# }

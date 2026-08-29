@@ -1,0 +1,32 @@
+# Replace `your-domain.example` with your real domain.
+# Caddy auto-provisions a Let's Encrypt certificate on first start —
+# ports 80 and 443 must be reachable from the public internet.
+
+your-domain.example {
+    encode zstd gzip
+
+    # Forward everything to the Node app inside the docker network.
+    reverse_proxy x402:3000
+
+    # Reasonable security headers; the app sets the rest via helmet.
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        X-Content-Type-Options "nosniff"
+        -Server
+    }
+
+    log {
+        output stdout
+        format console
+        level INFO
+    }
+}
+
+# Optional: localhost block for local docker compose testing.
+# Caddy issues a self-signed cert here; your browser will warn — that's fine for dev.
+# Uncomment if you want `https://localhost` to work locally.
+#
+# localhost {
+#     reverse_proxy x402:3000
+# }

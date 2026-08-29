@@ -1,0 +1,7 @@
+{
+  "_opomba": "AGENT/UPORABNIK (plačnik) — denarnica, ki PLAČUJE odčitke. Po README.md ta program teče na PRENOSNIKU, zato je ta ključ tam (ne na strežniku). Potrebuje testni ETH za 20 transakcij + gas. V mock načinu ni potrebna. NIKOLI ne deli privatnega ključa.",
+  "address": "0x0000000000000000000000000000000000000000",
+  "privateKey": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "_opomba_x402": "x402 v2 (vzporedni način, testna ETH konfiguracija): x402PayerPrivateKey je PLAČNIKOVA denarnica (gas plača strežnik). V mock načinu ni potrebna; pravi tek bi zahteval žeton z EIP-3009. NIKOLI je ne deli in ne nalagaj v git.",
+  "x402PayerPrivateKey": ""
+}

@@ -1,0 +1,21 @@
+{
+  "name": "x402-iot-agent-dobroimetje",
+  "version": "1.0.0",
+  "description": "Consumer agent: one top-up opens a session, then N EIP-191 signed debits",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node agent.js --mock --debits 20",
+    "mock": "node agent.js --mock --debits 20",
+    "real": "node agent.js --real --debits 20 --pause-ms 200",
+    "security": "node agent.js --security",
+    "gen-wallet": "node generate-wallet.js"
+  },
+  "dependencies": {
+    "@x402/evm": "^2.23.0",
+    "@x402/extensions": "^2.23.0",
+    "@x402/fetch": "^2.23.0",
+    "axios": "^1.6.0",
+    "ethers": "^6.9.0",
+    "viem": "^2.55.19"
+  }
+}

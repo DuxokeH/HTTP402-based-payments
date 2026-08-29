@@ -1,0 +1,15 @@
+{
+  "name": "x402-klient",
+  "version": "1.0.0",
+  "description": "X402 Client for payment protocol",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node run.js",
+    "mock": "node run.js --mock",
+    "real": "node run.js --pause-ms 1000"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "ethers": "^6.9.0"
+  }
+}

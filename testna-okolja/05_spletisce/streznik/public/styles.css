@@ -1,0 +1,68 @@
+:root{
+  --blue:#2a78d6; --orange:#eb6834; --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
+  --surface:#ffffff; --plane:#f4f5f7; --grid:#e1e0d9; --good:#0ca30c; --bad:#d03b3b;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--plane);color:var(--ink);
+  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;line-height:1.5}
+main{max-width:900px;margin:0 auto;padding:1.5rem 1rem 3rem}
+header h1{margin:.2rem 0;font-size:1.6rem}
+.tagline{color:var(--ink2);margin:.2rem 0 .6rem}
+.badge{display:inline-block;font-size:.85rem;padding:.25rem .6rem;border-radius:999px;background:#eef;color:var(--ink2);border:1px solid var(--grid)}
+.badge.mock{background:#fff4ee;color:#a2431f;border-color:#f3d3c3}
+.badge.real{background:#eaf7ef;color:#0a6b2e;border-color:#c7ebd4}
+
+.tabs{display:flex;gap:.4rem;margin:1rem 0;flex-wrap:wrap}
+.tab{background:var(--surface);border:1px solid var(--grid);color:var(--ink2);
+  padding:.55rem .9rem;border-radius:10px;cursor:pointer;font-size:.95rem}
+.tab.active{background:var(--blue);color:#fff;border-color:var(--blue);font-weight:600}
+.panel{display:none}.panel.active{display:block}
+
+.card{background:var(--surface);border:1px solid var(--grid);border-radius:14px;
+  padding:1.1rem 1.2rem;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.card h2{margin:.1rem 0 .3rem;font-size:1.2rem}
+.muted{color:var(--muted)}.small{font-size:.85rem}
+.row{display:flex;justify-content:space-between;padding:.3rem 0;border-bottom:1px solid var(--grid)}
+.label{color:var(--muted)}.value{font-weight:500}.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85rem}
+
+button{background:var(--blue);color:#fff;border:none;border-radius:10px;
+  padding:.55rem 1rem;font-size:.95rem;cursor:pointer;margin-top:.5rem}
+button:hover{filter:brightness(1.05)}
+button:disabled{opacity:.5;cursor:not-allowed}
+button.ghost{background:transparent;color:var(--blue);border:1px solid var(--blue);margin-left:.4rem}
+.status{margin-left:.6rem;color:var(--ink2);font-size:.9rem}
+textarea{width:100%;border:1px solid var(--grid);border-radius:10px;padding:.6rem;font-family:inherit;font-size:.95rem;resize:vertical}
+.controls{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;margin:.6rem 0}
+.controls input{width:5rem;padding:.35rem .5rem;border:1px solid var(--grid);border-radius:8px}
+
+.steps{list-style:none;padding:0;margin:.8rem 0;display:flex;gap:.4rem;flex-wrap:wrap}
+.steps li{flex:1;min-width:140px;padding:.5rem;border:1px solid var(--grid);border-radius:8px;font-size:.85rem;color:var(--muted);text-align:center}
+.steps li.active{border-color:var(--blue);color:var(--blue)}
+.steps li.done{border-color:var(--good);color:var(--good);background:#f2fbf4}
+.steps li.fail{border-color:var(--bad);color:var(--bad);background:#fdf2f2}
+
+.timing{width:100%;border-collapse:collapse;margin:.4rem 0}
+.timing td{padding:.3rem .4rem;border-bottom:1px solid var(--grid)}
+.timing td:last-child{text-align:right}
+.result{background:#0b0b0b;color:#eee;padding:.8rem;border-radius:10px;white-space:pre-wrap;font-size:.9rem;margin-top:.6rem}
+.err{color:var(--bad);font-weight:500}
+
+.stats{display:flex;gap:.8rem;margin:.8rem 0;flex-wrap:wrap}
+.stat{flex:1;min-width:140px;background:var(--plane);border:1px solid var(--grid);border-radius:12px;padding:.7rem;text-align:center}
+.stat-num{font-size:1.8rem;font-weight:700;font-variant-numeric:tabular-nums}
+.stat-num.orange{color:var(--orange)}.stat-num.blue{color:var(--blue)}
+.stat-lbl{color:var(--muted);font-size:.8rem}
+
+.bar-wrap{height:14px;background:var(--plane);border:1px solid var(--grid);border-radius:999px;overflow:hidden;margin:.3rem 0}
+.bar{height:100%;width:0;transition:width .25s ease}
+.bar.orange{background:var(--orange)}.bar.blue{background:var(--blue)}
+
+.session{background:var(--plane);border:1px solid var(--grid);border-radius:12px;padding:.4rem .8rem;margin:.6rem 0}
+.log{max-height:280px;overflow:auto;background:#0f1116;color:#d7dbe3;border-radius:10px;
+  padding:.6rem;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.82rem;margin-top:.6rem}
+.logline{padding:.05rem 0;white-space:pre-wrap}
+.logline.muted{color:#8b93a3}.logline.ok{color:#57c98a}.logline.fail{color:#f08a8a}
+
+footer{color:var(--muted);font-size:.85rem;margin-top:1.4rem;text-align:center}
+code{background:rgba(128,128,128,.15);padding:.05rem .3rem;border-radius:4px}
+.hidden{display:none}

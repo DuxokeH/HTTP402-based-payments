@@ -1,0 +1,8 @@
+{
+  "_opomba": "Denarnica PLAČNIKA za pravi način (--real). Kopiraj v wallet.json in vpiši financiran Sepolia zasebni ključ. V mock načinu te datoteke ne rabiš — agent si ustvari enkratno denarnico brez sredstev.",
+  "_opomba_vloge": "Ta agent je plačnik: pošilja ETH in plačilo po posredniškem protokolu prijavi POSREDNIKU. Prejemnik je trgovčeva denarnica iz ../streznik/wallet.json.",
+  "address": "0x0000000000000000000000000000000000000000",
+  "privateKey": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "_opomba_x402": "x402 v2 (vzporedni način, testna ETH konfiguracija — poravnava sintetična/mock): x402PayerPrivateKey je PLAČNIKOVA denarnica (gas plača strežnik). V mock načinu ni potrebna; pravi tek bi zahteval EIP-3009 žeton (npr. USDC/EURC). NIKOLI je ne deli in ne nalagaj v git.",
+  "x402PayerPrivateKey": ""
+}

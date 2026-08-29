@@ -1,0 +1,94 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Produkcijska namestitev mape 04_spletisce_posrednik — POSREDNIŠKA VEJA
+#
+#  Tri storitve namesto ene, ker sta trgovec in posrednik LOČENA PROCESA.
+#  Prav to loči topologijo (b) od (a): če bi bila v istem procesu, dodatnih
+#  skokov ne bi bilo in meritvi latence ne bi merili ničesar.
+#
+#    posrednik  — edini z dostopom do verige (JSON-RPC), vrata 4000
+#    trgovec    — spletišče in vsi trije tokovi, brez verige, vrata 8081
+#    caddy      — TLS za javni dostop
+#
+#  Zagon:
+#    cp posrednik/.env.example posrednik/.env
+#    cp streznik/.env.example  streznik/.env
+#    cp streznik/wallet.example.json streznik/wallet.json
+#    # v Caddyfile vpiši svojo domeno
+#    docker compose up -d posrednik
+#    grep ZETON posrednik/data/admin-credentials.txt     # → POSREDNIK_TOKEN v streznik/.env
+#    docker compose up -d
+#
+#  Ime projekta je izrecno: privzeto bi ga Compose izpeljal iz imena mape in bi
+#  se ta veja tiho delila omrežje in nosilce z mapo 05_spletisce.
+#
+#  Za Wireshark dokaze odkomentiraj `ports` pri OBEH storitvah in zajemi promet
+#  na 8081 (odjemalec↔trgovec) in 4000 (odjemalec/trgovec↔posrednik).
+#  Šele oboje skupaj pokaže vseh 5 izmenjav posredniškega toka — glej ../README.md.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: x402-posrednik
+
+services:
+  posrednik:
+    build: ./posrednik
+    image: x402-posrednik:latest
+    container_name: x402-posrednik
+    restart: unless-stopped
+    env_file:
+      - ./posrednik/.env
+    volumes:
+      - ./posrednik/data:/app/data
+    expose:
+      - "4000"
+    # Plačnik (brskalnik ali zunanji agent) pošlje /submit-payment NARAVNOST sem,
+    # zato mora biti posrednik dosegljiv od zunaj, kadar plačnik ni na tem gostitelju.
+    # ports:
+    #   - "4000:4000"
+    networks:
+      - x402-net
+
+  trgovec:
+    build: ./streznik
+    image: x402-spletisce-posrednik:latest
+    container_name: x402-spletisce-posrednik
+    restart: unless-stopped
+    env_file:
+      - ./streznik/.env
+    environment:
+      # Znotraj omrežja Compose je posrednik dosegljiv po imenu storitve.
+      POSREDNIK_URL: http://posrednik:4000
+    volumes:
+      - ./streznik/data:/app/data
+      - ./streznik/wallet.json:/app/wallet.json:ro
+    expose:
+      - "8081"
+    # Odkomentiraj samo za zajem po navadnem HTTP (LAN/loopback):
+    # ports:
+    #   - "8081:8081"
+    depends_on:
+      - posrednik
+    networks:
+      - x402-net
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: x402-posrednik-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - trgovec
+    networks:
+      - x402-net
+
+networks:
+  x402-net:
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,38 @@
+services:
+  x402:
+    build: .
+    image: x402-server:latest
+    container_name: x402-server
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./wallet.json:/app/wallet.json:ro
+    expose:
+      - "3000"
+    networks:
+      - x402-net
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: x402-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - x402
+    networks:
+      - x402-net
+
+networks:
+  x402-net:
+
+volumes:
+  caddy_data:
+  caddy_config:
