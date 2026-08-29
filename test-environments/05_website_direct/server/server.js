@@ -3,13 +3,13 @@
 /**
  * ============================================================================
  *  X402 SHOWCASE SITE — all three payment modes on ONE hosted server
- *  (folder 05_spletisce)
+ *  (folder 05_website_direct)
  * ============================================================================
  *
  *  One Express app + one web UI with three tabs:
- *    1) Enkratno plačilo   — human pays via MetaMask   → /enkratno/*
- *    2) Avtomatska plačila — 20 on-chain tx (M2M)      → /tx/*   (+ SSE /run/tx)
- *    3) Merjena seja       — 1 top-up + N signed debits (M2M) → /merjeno/* (+ SSE /run/merjeno)
+ *    1) Single payment     — human pays via MetaMask   → /single/*
+ *    2) Machine payments   — 20 on-chain tx (M2M)      → /tx/*   (+ SSE /run/tx)
+ *    3) Metered session    — 1 top-up + N signed debits (M2M) → /metered/* (+ SSE /run/metered)
  *
  *  The two M2M modes are driven by an in-process agent (runner.js) that makes
  *  REAL HTTP calls to this server over loopback (so Wireshark still sees the
@@ -36,10 +36,10 @@ const { z } = require('zod');
 
 const db = require('./db');
 const runner = require('./runner');
-// Uradni x402 v2 — SAMOFACILITIRANI vzporedni način (X402_MODE=self): trgovec
-// sam preverja in poravnava ETH na Ethereum Sepolia (testno — poravnava
-// sintetična/mock) prek lastnega X402_RPC_URL.
-// Brez klicev kateremu koli facilitatorju — nasprotje mape 04.
+// Official x402 v2 — SELF-FACILITATED parallel mode (X402_MODE=self): the merchant
+// verifies and settles ETH on Ethereum Sepolia itself (testnet — the settlement is
+// synthetic/mock) through its own X402_RPC_URL.
+// No calls to any facilitator — the opposite of folder 04.
 const x402 = require('./x402');
 const dbx = x402.enabled ? require('./db_x402') : null;
 const authLib = require('./auth');
@@ -66,14 +66,14 @@ const DEBIT_MAX_AGE_MS = parseInt(process.env.DEBIT_MAX_AGE_MS || '120000', 10);
 const SESSION_TTL_DEFAULT = parseInt(process.env.SESSION_TTL_DEFAULT || '3600', 10);
 const SESSION_TTL_MAX = parseInt(process.env.SESSION_TTL_MAX || '86400', 10);
 
-// Browser session token (docs/IDENTITETA.md §2, izboljšava B): correlation only, never authorization.
+// Browser session token (docs/IDENTITY.md §2, improvement B): correlation only, never authorization.
 const SID_COOKIE = 'sid';
 const WEB_SESSION_TTL = parseInt(process.env.WEB_SESSION_TTL_SECONDS || '1800', 10);
 const COOKIE_SECURE = process.env.COOKIE_SECURE === 'true';   // force `Secure` when TLS is terminated upstream
 
-const RES_ENKRATNO = '/enkratno/service';
+const RES_SINGLE = '/single/service';
 const RES_TX = '/tx/reading';
-const RES_MERJENO = '/merjeno/reading-metered';
+const RES_METERED = '/metered/reading-metered';
 
 // Origin of the configured RPC, so the browser (viem publicClient) may reach it under CSP.
 const RPC_ORIGIN = (() => { try { return new URL(RPC_URL).origin; } catch { return null; } })();
@@ -115,43 +115,43 @@ app.use(helmet({ contentSecurityPolicy: { useDefaults: true, directives: {
   'script-src': ["'self'", 'https://esm.sh', "'unsafe-inline'"],
   'connect-src': ["'self'", 'https://*.publicnode.com', 'https://*.infura.io', 'https://*.alchemy.com', ...(RPC_ORIGIN ? [RPC_ORIGIN] : [])],
   'img-src': ["'self'", 'data:'],
-  // Izven produkcije odstrani helmetov privzeti `upgrade-insecure-requests`: dostop po
-  // navadnem HTTP (LAN/loopback) je namenoma podprt za zajem v Wiresharku, brskalnik pa
-  // bi sicer poskusil vse nadgraditi v https in stran ne bi delovala. V produkciji
-  // (za Caddyjem s TLS) direktiva ostane.
+  // Outside production, drop helmet's default `upgrade-insecure-requests`: access over
+  // plain HTTP (LAN/loopback) is deliberately supported for the Wireshark capture, and the
+  // browser would otherwise try to upgrade everything to https, leaving the page broken.
+  // In production (behind Caddy with TLS) the directive stays.
   ...(IS_PROD ? {} : { 'upgrade-insecure-requests': null }) } } }));
 app.use(cors());
 app.use(express.json({ limit: '64kb' }));
 app.use((req, res, next) => { req.tStart = performance.now(); req.reqId = uuidv4(); req.log = logger.child({ reqId: req.reqId, path: req.path }); res.setHeader('X-Request-Id', req.reqId); next(); });
 const sMs = (req) => (performance.now() - req.tStart).toFixed(3);
 
-// ══════════ SKRBNIŠKA PRIJAVA — celotno spletišče je zaprto ══════════════════
-// Javna ostaneta samo /prijava (+ /odjava) in /health (za healthcheck vsebnika).
-// Vse ostalo — stran, /config, vsi trije plačilni tokovi, /run/* in /seja —
-// zahteva prijavo (piškotek) ali strojni žeton (Authorization: Bearer).
-// Poverilnice se ustvarijo ob prvem zagonu → data/admin-credentials.txt.
+// ══════════ ADMIN LOGIN — the entire website is locked ═══════════════════════
+// Only /login (+ /logout) and /health (for the container healthcheck) stay public.
+// Everything else — the page, /config, all three payment flows, /run/* and /session —
+// requires a login (cookie) or a machine token (Authorization: Bearer).
+// The credentials are created on the first start → data/admin-credentials.txt.
 const auth = authLib.create({
   dataDir: path.join(__dirname, 'data'),
-  appName: 'X402 spletišče — neposredno (mapa 05)',
+  appName: 'X402 website — direct (folder 05)',
   logger
 });
-auth.mount(app);                 // /prijava, /odjava — pred zaporo
-app.use(auth.requireAdmin);      // od tu naprej je vse zaprto
+auth.mount(app);                 // /login, /logout — before the lockdown
+app.use(auth.requireAdmin);      // from here on everything is locked
 
-// ══════════ SEJNI ŽETON `sid` — KORELACIJA, NIKOLI AVTORIZACIJA ══════════════
-// (docs/IDENTITETA.md §2, izboljšava B)
+// ══════════ SESSION TOKEN `sid` — CORRELATION, NEVER AUTHORIZATION ═══════════
+// (docs/IDENTITY.md §2, improvement B)
 //
-// Ob prvem GET strežnik shrani kratkoživ žeton `sid` v piškotek in ga pri
-// nadaljnjih zahtevah bere SAMO zato, da dogodke iste seje poveže med sabo
-// (402 → dokazilo → dostop). Ker žeton potuje z brskalnikom in ne z omrežjem,
-// „ista oseba“ ostane prepoznana tudi, če se med potjo zamenja IP
-// (mobilno ↔ wifi, NAT, CGNAT).
+// On the first GET the server stores a short-lived `sid` token in a cookie and on
+// later requests reads it ONLY in order to tie the events of one session together
+// (402 → proof → access). Because the token travels with the browser and not with
+// the network, "the same person" stays recognised even if the IP changes along the
+// way (mobile ↔ wifi, NAT, CGNAT).
 //
-// KLJUČNO PRAVILO (docs/IDENTITETA.md §5 B.4): manjkajoč, neveljaven ali
-// spremenjen `sid` NIKOLI ne sme povzročiti zavrnitve. Zato je vse spodaj v
-// `try` in vedno pokliče `next()`. Prava identiteta ostaja denarnica
-// (podpis/pošiljatelj transakcije) in enkratni žetoni —
-// glej docs/IDENTITETA.md §2 in §3.
+// KEY RULE (docs/IDENTITY.md §5 B.4): a missing, invalid or changed `sid` may
+// NEVER cause a rejection. That is why everything below sits inside `try` and
+// always calls `next()`. The real identity remains the wallet
+// (the signature / sender of the transaction) and the one-time tokens —
+// see docs/IDENTITY.md §2 and §3.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function readCookie(header, name) {
   if (!header) return null;
@@ -179,15 +179,15 @@ app.use((req, res, next) => {
     }
     req.sid = sid;
     const t = db.touchWebSession({ sid, ip: req.ip, userAgent: req.get('user-agent'), ttlSeconds: WEB_SESSION_TTL });
-    if (t.ipChanged) req.log.info({ sid: sid.slice(0, 8) }, 'IP seje se je spremenil — dostop se NE zavrne (identiteta ni vezana na IP)');
+    if (t.ipChanged) req.log.info({ sid: sid.slice(0, 8) }, 'The session IP changed — access is NOT denied (identity is not tied to the IP)');
   } catch (err) {
-    (req.log || logger).warn({ err: err.message }, 'korelacija seje ni uspela — zahteva se nadaljuje normalno');
+    (req.log || logger).warn({ err: err.message }, 'session correlation failed — the request continues normally');
   }
   next();
 });
 // Correlation helpers: best-effort, never throw into the request path.
-const linkSid = (req, kind, ref) => { try { if (req.sid && ref) db.linkWebSession({ sid: req.sid, kind, ref, ip: req.ip }); } catch (e) { (req.log || logger).warn({ err: e.message }, 'link seje ni uspel'); } };
-const notePayer = (req, addr) => { try { if (req.sid && addr) db.setWebSessionPayer(req.sid, ethers.getAddress(addr)); } catch (e) { (req.log || logger).warn({ err: e.message }, 'zapis plačnika v sejo ni uspel'); } };
+const linkSid = (req, kind, ref) => { try { if (req.sid && ref) db.linkWebSession({ sid: req.sid, kind, ref, ip: req.ip }); } catch (e) { (req.log || logger).warn({ err: e.message }, 'session link failed'); } };
+const notePayer = (req, addr) => { try { if (req.sid && addr) db.setWebSessionPayer(req.sid, ethers.getAddress(addr)); } catch (e) { (req.log || logger).warn({ err: e.message }, 'recording the payer in the session failed'); } };
 
 app.use(express.static(path.join(__dirname, 'public'), { index: 'index.html' }));
 
@@ -215,24 +215,25 @@ function nextReading() {
 app.get('/config', (req, res) => res.json({
   network: NETWORK, chainId: NETWORK === 'sepolia' ? '0xaa36a7' : null, receiver: RECEIVER, mockVerify: MOCK_VERIFY,
   rpcUrl: RPC_URL, ethEurRate: ETH_EUR_RATE, hasPayerKey: !!PAYER_PK,
-  enkratno: { resource: RES_ENKRATNO, priceEth: SERVICE_PRICE_ETH, priceEurApprox: (parseFloat(SERVICE_PRICE_ETH) * ETH_EUR_RATE).toFixed(4) },
+  single: { resource: RES_SINGLE, priceEth: SERVICE_PRICE_ETH, priceEurApprox: (parseFloat(SERVICE_PRICE_ETH) * ETH_EUR_RATE).toFixed(4) },
   tx: { resource: RES_TX, priceWei: PRICE_WEI_PER_READING.toString(), priceEth: ethers.formatEther(PRICE_WEI_PER_READING) },
-  merjeno: { resource: RES_MERJENO, priceWeiPerCall: PRICE_WEI_PER_CALL.toString(), priceWeiPerByte: PRICE_WEI_PER_BYTE.toString(), minPriceWei: MIN_PRICE_WEI.toString(), sessionTtlDefault: SESSION_TTL_DEFAULT },
+  metered: { resource: RES_METERED, priceWeiPerCall: PRICE_WEI_PER_CALL.toString(), priceWeiPerByte: PRICE_WEI_PER_BYTE.toString(), minPriceWei: MIN_PRICE_WEI.toString(), sessionTtlDefault: SESSION_TTL_DEFAULT },
   x402: x402.enabled ? x402.summary() : null
 }));
 
-// Pogled na sejo brskalnika — dokazilo, da strežnik „ob GET shrani žeton in ga kasneje
-// prepozna“, tudi če se IP vmes spremeni. Vrne le okrajšan `sid` (piškotek je HttpOnly)
-// in število menjav IP, nikoli samih naslovov. Brez piškotka odgovori 200 z `seja: null` —
-// nikoli 403 (docs/IDENTITETA.md §5 B.4).
-app.get('/seja', (req, res) => {
-  let seja = null;
-  try { seja = req.sid ? db.webSessionView(req.sid) : null; } catch (e) { req.log.warn({ err: e.message }, 'branje seje ni uspelo'); }
+// A view of the browser session — proof that the server "stores a token on GET and
+// recognises it later", even if the IP changes in between. It returns only a shortened
+// `sid` (the cookie is HttpOnly) and the number of IP changes, never the addresses
+// themselves. Without a cookie it answers 200 with `session: null` — never 403
+// (docs/IDENTITY.md §5 B.4).
+app.get('/session', (req, res) => {
+  let session = null;
+  try { session = req.sid ? db.webSessionView(req.sid) : null; } catch (e) { req.log.warn({ err: e.message }, 'reading the session failed'); }
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Server-Ms', sMs(req));
   res.json({
-    success: true, seja,
-    pravilo: 'sid je zgolj korelacija. Manjkajoč ali spremenjen sid (npr. ob menjavi omrežja/IP) ne povzroči zavrnitve. Identiteta = denarnica + enkratni žetoni, ne IP naslov.'
+    success: true, session,
+    pravilo: 'sid is correlation only. A missing or changed sid (e.g. when the network/IP changes) does not cause a rejection. Identity = wallet + one-time tokens, not the IP address.'
   });
 });
 
@@ -244,52 +245,52 @@ app.get('/health', async (req, res) => {
   res.status(dbOk ? 200 : 503).json({ status: dbOk ? 'ok' : 'down', receiver: RECEIVER, mockVerify: MOCK_VERIFY, rpc: rpcOk ? 'ok' : 'down', lastBlock });
 });
 
-// ════════════════════════════ 1) ENKRATNO (MetaMask) ════════════════════════
-app.get('/enkratno/config', (req, res) => res.json({ network: NETWORK, chainId: NETWORK === 'sepolia' ? '0xaa36a7' : null, merchant: RECEIVER, service: { price: SERVICE_PRICE_ETH, currency: 'ETH', network: NETWORK }, priceEurApprox: (parseFloat(SERVICE_PRICE_ETH) * ETH_EUR_RATE).toFixed(4), mockVerify: MOCK_VERIFY }));
+// ════════════════════════════ 1) SINGLE (MetaMask) ════════════════════════
+app.get('/single/config', (req, res) => res.json({ network: NETWORK, chainId: NETWORK === 'sepolia' ? '0xaa36a7' : null, merchant: RECEIVER, service: { price: SERVICE_PRICE_ETH, currency: 'ETH', network: NETWORK }, priceEurApprox: (parseFloat(SERVICE_PRICE_ETH) * ETH_EUR_RATE).toFixed(4), mockVerify: MOCK_VERIFY }));
 
-app.get('/enkratno/service', (req, res) => {
+app.get('/single/service', (req, res) => {
   const proofToken = req.headers['x-payment'] || req.headers['x-payment-proof'];
   if (!proofToken) {
     const requestId = uuidv4();
     let payer = req.headers['x-payer'] || req.query.payer || null;
     if (payer) { try { payer = ethers.getAddress(payer); } catch { payer = null; } }
-    db.createPaymentRequest({ requestId, resource: RES_ENKRATNO, recipient: RECEIVER, amountEth: SERVICE_PRICE_ETH, currency: 'ETH', network: NETWORK, payerAddress: payer, ttlSeconds: REQ_TTL });
+    db.createPaymentRequest({ requestId, resource: RES_SINGLE, recipient: RECEIVER, amountEth: SERVICE_PRICE_ETH, currency: 'ETH', network: NETWORK, payerAddress: payer, ttlSeconds: REQ_TTL });
     linkSid(req, 'request_id', requestId);
     res.setHeader('X-Server-Ms', sMs(req));
-    return res.status(402).json({ error: 'Payment Required', message: 'Za dostop do te storitve je potrebno plačilo.', payment: { requestId, resource: RES_ENKRATNO, to: RECEIVER, amount: SERVICE_PRICE_ETH, currency: 'ETH', network: NETWORK, expiresInSeconds: REQ_TTL } });
+    return res.status(402).json({ error: 'Payment Required', message: 'Payment is required to access this service.', payment: { requestId, resource: RES_SINGLE, to: RECEIVER, amount: SERVICE_PRICE_ETH, currency: 'ETH', network: NETWORK, expiresInSeconds: REQ_TTL } });
   }
   const proof = db.getProof(proofToken);
-  if (!proof) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Neveljaven ali potekel dokazni žeton' }); }
+  if (!proof) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Invalid or expired proof token' }); }
   res.setHeader('X-Server-Ms', sMs(req));
   res.json({ success: true, authorized: true, proofToken, resource: proof.resource, consumed: !!proof.consumed_at, payment: { verified: true, txHash: proof.tx_hash, blockNumber: proof.block_number } });
 });
 
-app.post('/enkratno/service', (req, res) => {
+app.post('/single/service', (req, res) => {
   const proofToken = req.headers['x-payment'] || req.headers['x-payment-proof'];
-  if (!proofToken) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(402).json({ error: 'Payment Required', message: 'Manjka glava X-Payment' }); }
+  if (!proofToken) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(402).json({ error: 'Payment Required', message: 'The X-Payment header is missing' }); }
   const proof = db.getProof(proofToken);
-  if (!proof) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Neveljaven ali potekel dokazni žeton' }); }
-  if (proof.consumed_at) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Dokazni žeton je že bil porabljen' }); }
-  if (proof.resource !== RES_ENKRATNO) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Žeton ne velja za ta vir' }); }
-  const prompt = (req.body && typeof req.body.prompt === 'string') ? req.body.prompt.slice(0, 4000) : 'pozdravljen';
-  if (!db.consumeProof(proofToken)) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(409).json({ error: 'Žeton porabljen sočasno' }); }
+  if (!proof) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Invalid or expired proof token' }); }
+  if (proof.consumed_at) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'The proof token has already been used' }); }
+  if (proof.resource !== RES_SINGLE) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'The token is not valid for this resource' }); }
+  const prompt = (req.body && typeof req.body.prompt === 'string') ? req.body.prompt.slice(0, 4000) : 'hello';
+  if (!db.consumeProof(proofToken)) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(409).json({ error: 'The token was consumed concurrently' }); }
   res.setHeader('X-Server-Ms', sMs(req));
-  res.json({ success: true, response: `Odgovor zaščitene storitve. Vaš poziv: "${prompt}". (demo način)`, model: 'demo', payment: { txHash: proof.tx_hash, blockNumber: proof.block_number } });
+  res.json({ success: true, response: `Response of the protected service. Your prompt: "${prompt}". (demo mode)`, model: 'demo', payment: { txHash: proof.tx_hash, blockNumber: proof.block_number } });
 });
 
-app.post('/enkratno/verify', async (req, res, next) => {
+app.post('/single/verify', async (req, res, next) => {
   const parsed = verifySchema.safeParse(req.body);
   if (!parsed.success) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() }); }
   const { requestId, txHash, payerAddress } = parsed.data;
   const pr = db.getPaymentRequest(requestId);
-  if (!pr) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Neveljavna ali potekla plačilna zahteva' }); }
-  if (db.isTxRedeemed(txHash)) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Transakcija je že bila unovčena' }); }
+  if (!pr) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Invalid or expired payment request' }); }
+  if (db.isTxRedeemed(txHash)) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'The transaction has already been redeemed' }); }
   const v = await verifyPayment(txHash, payerAddress, RECEIVER, ethers.parseEther(pr.amount_eth), req);
   if (v.error) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json(v.error); }
   const tx = v.tx;
   const proofToken = `proof_${uuidv4()}`;
   try { db.finalizeVerification({ proofToken, requestId, resource: pr.resource, txHash: tx.hash, blockNumber: tx.blockNumber, payerAddress: tx.from, recipient: tx.to, amountEth: ethers.formatEther(tx.value), ttlSeconds: PROOF_TTL }); }
-  catch (err) { if (err.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Transakcija je že bila unovčena' }); } return next(err); }
+  catch (err) { if (err.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'The transaction has already been redeemed' }); } return next(err); }
   linkSid(req, 'proof_token', proofToken); notePayer(req, tx.from);
   res.setHeader('X-Server-Ms', sMs(req));
   res.json({ success: true, proofToken, resource: pr.resource, verified: true, transaction: { hash: tx.hash, blockNumber: tx.blockNumber, from: tx.from, to: tx.to, value: ethers.formatEther(tx.value) + ' ETH', gasUsed: tx.gasUsed } });
@@ -305,13 +306,13 @@ app.get('/tx/reading', (req, res) => {
     db.createPaymentRequest({ requestId, resource: RES_TX, recipient: RECEIVER, amountEth: ethers.formatEther(PRICE_WEI_PER_READING), currency: 'ETH', network: NETWORK, payerAddress: payer, ttlSeconds: REQ_TTL });
     linkSid(req, 'request_id', requestId);
     res.setHeader('X-Server-Ms', sMs(req));
-    return res.status(402).json({ error: 'Payment Required', message: 'Za odčitek senzorja je potrebno plačilo.', payment: { requestId, resource: RES_TX, to: RECEIVER, amount: ethers.formatEther(PRICE_WEI_PER_READING), priceWei: PRICE_WEI_PER_READING.toString(), currency: 'ETH', network: NETWORK, expiresInSeconds: REQ_TTL } });
+    return res.status(402).json({ error: 'Payment Required', message: 'Payment is required for a sensor reading.', payment: { requestId, resource: RES_TX, to: RECEIVER, amount: ethers.formatEther(PRICE_WEI_PER_READING), priceWei: PRICE_WEI_PER_READING.toString(), currency: 'ETH', network: NETWORK, expiresInSeconds: REQ_TTL } });
   }
   const proof = db.getProof(proofToken);
-  if (!proof) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Neveljaven ali potekel dokazni žeton' }); }
-  if (proof.consumed_at) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Dokazni žeton je že bil porabljen' }); }
-  if (proof.resource !== RES_TX) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Žeton ne velja za ta vir' }); }
-  if (!db.consumeProof(proofToken)) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(409).json({ error: 'Žeton porabljen sočasno' }); }
+  if (!proof) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Invalid or expired proof token' }); }
+  if (proof.consumed_at) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'The proof token has already been used' }); }
+  if (proof.resource !== RES_TX) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'The token is not valid for this resource' }); }
+  if (!db.consumeProof(proofToken)) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(409).json({ error: 'The token was consumed concurrently' }); }
   res.setHeader('X-Server-Ms', sMs(req));
   res.json({ success: true, reading: nextReading(), payment: { verified: true, txHash: proof.tx_hash, blockNumber: proof.block_number } });
 });
@@ -321,14 +322,14 @@ app.post('/tx/verify', async (req, res, next) => {
   if (!parsed.success) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() }); }
   const { requestId, txHash, payerAddress } = parsed.data;
   const pr = db.getPaymentRequest(requestId);
-  if (!pr) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Neveljavna ali potekla plačilna zahteva' }); }
-  if (db.isTxRedeemed(txHash)) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Transakcija je že bila unovčena' }); }
+  if (!pr) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Invalid or expired payment request' }); }
+  if (db.isTxRedeemed(txHash)) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'The transaction has already been redeemed' }); }
   const v = await verifyPayment(txHash, payerAddress, RECEIVER, PRICE_WEI_PER_READING, req);
   if (v.error) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json(v.error); }
   const tx = v.tx;
   const proofToken = `proof_${uuidv4()}`;
   try { db.finalizeVerification({ proofToken, requestId, resource: pr.resource, txHash: tx.hash, blockNumber: tx.blockNumber, payerAddress: tx.from, recipient: tx.to, amountEth: ethers.formatEther(tx.value), ttlSeconds: PROOF_TTL }); }
-  catch (err) { if (err.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Transakcija je že bila unovčena' }); } return next(err); }
+  catch (err) { if (err.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'The transaction has already been redeemed' }); } return next(err); }
   linkSid(req, 'proof_token', proofToken); notePayer(req, tx.from);
   res.setHeader('X-Server-Ms', sMs(req));
   res.json({ success: true, proofToken, resource: pr.resource, verified: true, transaction: { hash: tx.hash, blockNumber: tx.blockNumber, gasUsed: tx.gasUsed } });
@@ -342,23 +343,23 @@ async function verifyPayment(txHash, payerAddress, expectedRecipient, minValueWe
   } else {
     verification = await verifyOnChain(txHash, req.log);
   }
-  if (!verification.verified) return { error: { error: 'Preverjanje transakcije ni uspelo', message: verification.error } };
+  if (!verification.verified) return { error: { error: 'Transaction verification failed', message: verification.error } };
   const tx = verification.tx;
-  if (tx.status !== 1) return { error: { error: 'Transakcija na verigi ni uspela' } };
-  if (tx.to?.toLowerCase() !== expectedRecipient.toLowerCase()) return { error: { error: 'Napačen prejemnik' } };
-  if (tx.from.toLowerCase() !== payerAddress.toLowerCase()) return { error: { error: 'Neujemanje plačnika' } };
-  if (BigInt(tx.value) < BigInt(minValueWei)) return { error: { error: 'Prenizek znesek' } };
+  if (tx.status !== 1) return { error: { error: 'The on-chain transaction failed' } };
+  if (tx.to?.toLowerCase() !== expectedRecipient.toLowerCase()) return { error: { error: 'Wrong recipient' } };
+  if (tx.from.toLowerCase() !== payerAddress.toLowerCase()) return { error: { error: 'Payer mismatch' } };
+  if (BigInt(tx.value) < BigInt(minValueWei)) return { error: { error: 'Amount too low' } };
   return { tx };
 }
 
-// ════════════════════════════ 3) MERJENO (session, M2M) ═════════════════════
+// ════════════════════════════ 3) METERED (session, M2M) ═════════════════════
 function debitMessage(payer, sessionId, nonce, reqPath, maxWei) { return `x402-debit:${payer.toLowerCase()}:${sessionId}:${nonce}:${reqPath}:${maxWei}`; }
 
-app.post('/merjeno/session/open', async (req, res, next) => {
+app.post('/metered/session/open', async (req, res, next) => {
   const parsed = openSchema.safeParse(req.body);
   if (!parsed.success) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() }); }
   const { txHash, payerAddress, budgetWei, ttlSeconds, mockDepositWei } = parsed.data;
-  if (db.isTxRedeemed(txHash)) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Transakcija je že bila unovčena' }); }
+  if (db.isTxRedeemed(txHash)) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'The transaction has already been redeemed' }); }
   let verification;
   if (MOCK_VERIFY) {
     const mockDeposit = mockDepositWei ? BigInt(mockDepositWei).toString() : (PRICE_WEI_PER_CALL * 25n).toString();
@@ -366,60 +367,60 @@ app.post('/merjeno/session/open', async (req, res, next) => {
   } else {
     verification = await verifyOnChain(txHash, req.log);
   }
-  if (!verification.verified) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Preverjanje transakcije ni uspelo', message: verification.error }); }
+  if (!verification.verified) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Transaction verification failed', message: verification.error }); }
   const tx = verification.tx;
-  if (tx.status !== 1) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Transakcija na verigi ni uspela' }); }
-  if (tx.to?.toLowerCase() !== RECEIVER.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Napačen prejemnik' }); }
-  if (tx.from.toLowerCase() !== payerAddress.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Neujemanje plačnika' }); }
+  if (tx.status !== 1) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'The on-chain transaction failed' }); }
+  if (tx.to?.toLowerCase() !== RECEIVER.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Wrong recipient' }); }
+  if (tx.from.toLowerCase() !== payerAddress.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Payer mismatch' }); }
   const deposit = BigInt(tx.value);
   let budget = deposit; if (budgetWei) { const b = BigInt(budgetWei); budget = b < deposit ? b : deposit; }
   const ttl = Math.min(ttlSeconds || SESSION_TTL_DEFAULT, SESSION_TTL_MAX);
   const sessionId = `sess_${uuidv4()}`;
   let session;
-  try { session = db.openSession({ sessionId, payerAddress: tx.from, resource: RES_MERJENO, depositWei: deposit, budgetWei: budget, txHash: tx.hash, ttlSeconds: ttl }); }
-  catch (err) { if (err.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Transakcija je že bila unovčena' }); } return next(err); }
+  try { session = db.openSession({ sessionId, payerAddress: tx.from, resource: RES_METERED, depositWei: deposit, budgetWei: budget, txHash: tx.hash, ttlSeconds: ttl }); }
+  catch (err) { if (err.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'The transaction has already been redeemed' }); } return next(err); }
   linkSid(req, 'metered_session', sessionId); notePayer(req, tx.from);
   res.setHeader('X-Server-Ms', sMs(req));
   res.json({ success: true, session: db.sessionView(session), transaction: { hash: tx.hash, blockNumber: tx.blockNumber, gasUsed: tx.gasUsed } });
 });
 
-app.get('/merjeno/session/:id', (req, res) => {
+app.get('/metered/session/:id', (req, res) => {
   const s = db.getSession(req.params.id);
   res.setHeader('X-Server-Ms', sMs(req));
-  if (!s) return res.status(404).json({ error: 'Seja ne obstaja' });
+  if (!s) return res.status(404).json({ error: 'The session does not exist' });
   res.json({ success: true, session: db.sessionView(s) });
 });
 
-app.get('/merjeno/reading-metered', (req, res) => {
+app.get('/metered/reading-metered', (req, res) => {
   const payer = req.header('X-Payer'), sessionId = req.header('X-Session'), nonce = req.header('X-Nonce'), signature = req.header('X-Signature');
   const maxWei = req.header('X-Max-Wei') || PRICE_WEI_PER_CALL.toString();
   if (!payer || !sessionId || !nonce || !signature) {
     res.setHeader('X-Server-Ms', sMs(req));
-    return res.status(402).json({ error: 'payment_required', metered: { mode: 'prepaid-session', openEndpoint: '/merjeno/session/open', priceWeiPerCall: PRICE_WEI_PER_CALL.toString(), priceWeiPerByte: PRICE_WEI_PER_BYTE.toString(), minPriceWei: MIN_PRICE_WEI.toString(), signedHeaders: ['X-Payer', 'X-Session', 'X-Nonce', 'X-Signature', 'X-Max-Wei'], message: 'x402-debit:{payer}:{session}:{nonce}:' + RES_MERJENO + ':{maxWei}' } });
+    return res.status(402).json({ error: 'payment_required', metered: { mode: 'prepaid-session', openEndpoint: '/metered/session/open', priceWeiPerCall: PRICE_WEI_PER_CALL.toString(), priceWeiPerByte: PRICE_WEI_PER_BYTE.toString(), minPriceWei: MIN_PRICE_WEI.toString(), signedHeaders: ['X-Payer', 'X-Session', 'X-Nonce', 'X-Signature', 'X-Max-Wei'], message: 'x402-debit:{payer}:{session}:{nonce}:' + RES_METERED + ':{maxWei}' } });
   }
-  let payerAddr; try { payerAddr = ethers.getAddress(payer); } catch { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Neveljaven naslov plačnika' }); }
+  let payerAddr; try { payerAddr = ethers.getAddress(payer); } catch { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Invalid payer address' }); }
   const nonceTs = parseInt(String(nonce).split('-')[0], 10);
-  if (!Number.isFinite(nonceTs) || Math.abs(Date.now() - nonceTs) > DEBIT_MAX_AGE_MS) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Zastarel ali napačen nonce' }); }
+  if (!Number.isFinite(nonceTs) || Math.abs(Date.now() - nonceTs) > DEBIT_MAX_AGE_MS) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Stale or invalid nonce' }); }
   // sign/verify against the FIXED resource path (mount-prefix safe)
-  let recovered; try { recovered = ethers.verifyMessage(debitMessage(payerAddr, sessionId, nonce, RES_MERJENO, maxWei), signature); }
-  catch { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Napačen podpis' }); }
-  if (recovered.toLowerCase() !== payerAddr.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Podpis se ne ujema s plačnikom' }); }
+  let recovered; try { recovered = ethers.verifyMessage(debitMessage(payerAddr, sessionId, nonce, RES_METERED, maxWei), signature); }
+  catch { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Invalid signature' }); }
+  if (recovered.toLowerCase() !== payerAddr.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'The signature does not match the payer' }); }
   const s = db.getSession(sessionId);
-  if (!s) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(404).json({ error: 'Seja ne obstaja' }); }
-  if (s.payer_address.toLowerCase() !== payerAddr.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Seja ne pripada temu plačniku' }); }
+  if (!s) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(404).json({ error: 'The session does not exist' }); }
+  if (s.payer_address.toLowerCase() !== payerAddr.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'The session does not belong to this payer' }); }
   const reading = nextReading();
   const body = JSON.stringify({ success: true, reading });
   const bytes = Buffer.byteLength(body);
   let price = PRICE_WEI_PER_CALL + PRICE_WEI_PER_BYTE * BigInt(bytes);
   if (price < MIN_PRICE_WEI) price = MIN_PRICE_WEI;
-  if (price > BigInt(maxWei)) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Cena presega podpisani maksimum', priceWei: price.toString(), maxWei }); }
-  const result = db.debit({ sessionId, amountWei: price, nonce, requestPath: RES_MERJENO, bytes });
+  if (price > BigInt(maxWei)) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'The price exceeds the signed maximum', priceWei: price.toString(), maxWei }); }
+  const result = db.debit({ sessionId, amountWei: price, nonce, requestPath: RES_METERED, bytes });
   if (!result.ok) {
     res.setHeader('X-Server-Ms', sMs(req));
-    if (result.reason === 'nonce_reused') return res.status(403).json({ error: 'Nonce že uporabljen (replay zavrnjen)' });
-    if (result.reason === 'session_expired') return res.status(403).json({ error: 'Seja je potekla (čas veljavnosti)' });
-    if (result.reason === 'budget_exceeded') return res.status(402).json({ error: 'Presežen proračun seje', reason: 'budget_exceeded', budgetRemainingWei: (result.budgetRemainingWei ?? 0n).toString() });
-    return res.status(402).json({ error: 'Nezadostno dobroimetje', reason: 'insufficient_balance', balanceWei: (result.balanceWei ?? 0n).toString() });
+    if (result.reason === 'nonce_reused') return res.status(403).json({ error: 'Nonce already used (replay rejected)' });
+    if (result.reason === 'session_expired') return res.status(403).json({ error: 'The session has expired (time to live)' });
+    if (result.reason === 'budget_exceeded') return res.status(402).json({ error: 'The session budget has been exceeded', reason: 'budget_exceeded', budgetRemainingWei: (result.budgetRemainingWei ?? 0n).toString() });
+    return res.status(402).json({ error: 'Insufficient credit', reason: 'insufficient_balance', balanceWei: (result.balanceWei ?? 0n).toString() });
   }
   res.set('X-Charged-Wei', price.toString());
   res.set('X-Balance-Wei', result.balanceWei.toString());
@@ -429,45 +430,45 @@ app.get('/merjeno/reading-metered', (req, res) => {
   res.type('application/json').send(body);
 });
 
-// ══════════ x402 v2 (VZPOREDNI NAČIN) — samofacilitirano ════════════════════
-// Trije x402 tokovi zrcalijo tri zavihke: enkratno plačilo, plačilo na
-// odčitek in merjena seja (x402 SAMO za polnitev; bremenitve ostanejo lokalni
-// EIP-191 podpisi v2 — NIČ poravnav na verigi za posamezne odčitke).
-// Ta strežnik preverja in poravnava SAM (lastni X402_RPC_URL) — v tej mapi
-// NI nobenega klica facilitatorju, lokalnemu ali oddaljenemu.
+// ══════════ x402 v2 (PARALLEL MODE) — self-facilitated ══════════════════════
+// The three x402 flows mirror the three tabs: single payment, pay per
+// reading and the metered session (x402 ONLY for the top-up; the debits stay local
+// EIP-191 v2 signatures — NO on-chain settlements for the individual readings).
+// This server verifies and settles ITSELF (its own X402_RPC_URL) — in this folder
+// there is NO call to a facilitator, local or remote.
 if (x402.enabled) {
   const asset = x402.resolveAsset();
-  const RES_X402_ENKRATNO = '/x402/enkratno/service';
+  const RES_X402_SINGLE = '/x402/single/service';
   const RES_X402_TX = '/x402/tx/reading';
-  const RES_X402_MERJENO = '/x402/merjeno/reading-metered';
+  const RES_X402_METERED = '/x402/metered/reading-metered';
   const PRICE_ATOMIC_PER_CALL = BigInt(x402.config.priceAtomic);
   const DEPOSIT_ATOMIC = BigInt(x402.config.sessionDepositAtomic);
   function debitMessageV2(payer, sessionId, nonce, reqPath, maxAtomic) {
     return `metered-debit-v2:${payer.toLowerCase()}:${sessionId}:${nonce}:${reqPath}:${maxAtomic}:${x402.config.network}:${asset.address.toLowerCase()}`;
   }
 
-  if (x402.MODE !== 'self') { logger.fatal({ mode: x402.MODE }, 'Mapa 05 je samofacilitirana — dovoljen je le X402_MODE=self'); process.exit(1); }
-  if (process.env.X402_FACILITATOR_URL) { logger.fatal('X402_FACILITATOR_URL v mapi 05 ni dovoljen — brez facilitatorja'); process.exit(1); }
+  if (x402.MODE !== 'self') { logger.fatal({ mode: x402.MODE }, 'Folder 05 is self-facilitated — only X402_MODE=self is allowed'); process.exit(1); }
+  if (process.env.X402_FACILITATOR_URL) { logger.fatal('X402_FACILITATOR_URL is not allowed in folder 05 — no facilitator'); process.exit(1); }
 
   const { middleware: x402Middleware, x402Route } = x402.buildMiddleware({
     dbx, logger,
     routes: {
-      'GET /x402/enkratno/service': x402.routeConfig('Zaščitena storitev — x402 exact, samofacilitirano (Ethereum Sepolia, ETH — testno)'),
-      'GET /x402/tx/reading': x402.routeConfig('IoT odčitek — x402 exact, plačilo na odčitek'),
-      'POST /x402/merjeno/session/open': x402.routeConfig('Odprtje predplačniške seje — x402 exact polnitev', x402.config.sessionDepositAtomic)
+      'GET /x402/single/service': x402.routeConfig('Protected service — x402 exact, self-facilitated (Ethereum Sepolia, ETH — testnet)'),
+      'GET /x402/tx/reading': x402.routeConfig('IoT reading — x402 exact, payment per reading'),
+      'POST /x402/metered/session/open': x402.routeConfig('Opening a prepaid session — x402 exact top-up', x402.config.sessionDepositAtomic)
     },
     onSettled: async ({ payload, settleResponse, plan }) => {
       if (!plan || !plan.sessionId) return;
       const payer = payload && payload.payload && payload.payload.authorization
         ? ethers.getAddress(payload.payload.authorization.from) : null;
       dbx.openX402Session({
-        sessionId: plan.sessionId, payerAddress: payer, resource: RES_X402_MERJENO,
+        sessionId: plan.sessionId, payerAddress: payer, resource: RES_X402_METERED,
         network: x402.config.network, asset: asset.address, assetDecimals: asset.decimals,
         depositAtomic: plan.depositAtomic, budgetAtomic: plan.budgetAtomic,
-        settleTxHash: settleResponse.transaction || '(neznan)', paymentId: plan.paymentId || null,
+        settleTxHash: settleResponse.transaction || '(unknown)', paymentId: plan.paymentId || null,
         expiresAt: plan.expiresAt
       });
-      logger.info({ sessionId: plan.sessionId, payer }, 'x402 seja odprta (po poravnavi)');
+      logger.info({ sessionId: plan.sessionId, payer }, 'x402 session opened (after settlement)');
     }
   });
 
@@ -475,10 +476,10 @@ if (x402.enabled) {
     res.setHeader('X-Server-Ms', sMs(req));
     res.json({
       ...x402.summary(),
-      enkratno: { resource: RES_X402_ENKRATNO, priceAtomic: x402.config.priceAtomic },
+      single: { resource: RES_X402_SINGLE, priceAtomic: x402.config.priceAtomic },
       tx: { resource: RES_X402_TX, priceAtomic: x402.config.priceAtomic },
-      merjeno: {
-        openEndpoint: '/x402/merjeno/session/open', resource: RES_X402_MERJENO,
+      metered: {
+        openEndpoint: '/x402/metered/session/open', resource: RES_X402_METERED,
         sessionDepositAtomic: x402.config.sessionDepositAtomic,
         priceAtomicPerCall: PRICE_ATOMIC_PER_CALL.toString(),
         signMessage: 'metered-debit-v2:{payer}:{session}:{nonce}:{path}:{maxAtomic}:{network}:{asset}'
@@ -488,35 +489,35 @@ if (x402.enabled) {
 
   app.use(x402Middleware);
 
-  // 1 · enkratno — x402 exact
-  app.get('/x402/enkratno/service', x402Route((req, res) => {
+  // 1 · single — x402 exact
+  app.get('/x402/single/service', x402Route((req, res) => {
     const pr = x402.readPaymentResponse(res.getHeader('PAYMENT-RESPONSE'));
     linkSid(req, 'x402_payment', (req.x402PaymentKey || '').slice(0, 40));
     res.setHeader('X-Server-Ms', sMs(req));
     res.json({
       success: true,
-      response: 'Odgovor zaščitene storitve (x402, samofacilitirano). Trgovec je plačilo preveril in poravnal sam.',
-      payment: { protokol: 'x402-self', shema: 'exact', omrezje: x402.config.network, sredstvo: x402.config.assetName, txHash: pr ? pr.txHash : null, placnikGasa: 'streznik' }
+      response: 'Response of the protected service (x402, self-facilitated). The merchant verified and settled the payment itself.',
+      payment: { protocol: 'x402-self', scheme: 'exact', network: x402.config.network, asset: x402.config.assetName, txHash: pr ? pr.txHash : null, gasPayer: 'server' }
     });
   }));
 
-  // 2 · plačilo na odčitek — x402 exact
+  // 2 · payment per reading — x402 exact
   app.get('/x402/tx/reading', x402Route((req, res) => {
     const reading = nextReading();
     const pr = x402.readPaymentResponse(res.getHeader('PAYMENT-RESPONSE'));
     res.setHeader('X-Server-Ms', sMs(req));
     res.json({
       success: true, reading,
-      payment: { protokol: 'x402-self', shema: 'exact', omrezje: x402.config.network, sredstvo: x402.config.assetName, txHash: pr ? pr.txHash : null, placnikGasa: 'streznik' }
+      payment: { protocol: 'x402-self', scheme: 'exact', network: x402.config.network, asset: x402.config.assetName, txHash: pr ? pr.txHash : null, gasPayer: 'server' }
     });
   }));
 
-  // 3 · merjena seja — x402 SAMO za polnitev
+  // 3 · metered session — x402 ONLY for the top-up
   const openX402Schema = z.object({
     budgetAtomic: z.string().regex(/^\d+$/).optional(),
     ttlSeconds: z.number().int().positive().optional()
   });
-  app.post('/x402/merjeno/session/open', x402Route((req, res) => {
+  app.post('/x402/metered/session/open', x402Route((req, res) => {
     const parsed = openX402Schema.safeParse(req.body || {});
     if (!parsed.success) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() }); }
     const ttl = Math.min(parsed.data.ttlSeconds || SESSION_TTL_DEFAULT, SESSION_TTL_MAX);
@@ -536,77 +537,77 @@ if (x402.enabled) {
         expiresAt: new Date(expiresAt).toISOString()
       },
       signMessage: 'metered-debit-v2:{payer}:{session}:{nonce}:{path}:{maxAtomic}:{network}:{asset}',
-      payment: { protokol: 'x402-self', shema: 'exact', txHash: pr ? pr.txHash : null, placnikGasa: 'streznik' }
+      payment: { protocol: 'x402-self', scheme: 'exact', txHash: pr ? pr.txHash : null, gasPayer: 'server' }
     });
   }));
 
-  app.get('/x402/merjeno/session/:id', (req, res) => {
+  app.get('/x402/metered/session/:id', (req, res) => {
     const sx = dbx.getX402Session(req.params.id);
     res.setHeader('X-Server-Ms', sMs(req));
-    if (!sx) return res.status(404).json({ error: 'Seja ne obstaja' });
+    if (!sx) return res.status(404).json({ error: 'The session does not exist' });
     res.json({ success: true, session: {
       sessionId: sx.session_id, payer: sx.payer_address, depositAtomic: sx.deposit_atomic,
       budgetAtomic: sx.budget_atomic, spentAtomic: sx.spent_atomic,
       balanceAtomic: (BigInt(sx.deposit_atomic) - BigInt(sx.spent_atomic)).toString(),
       network: sx.network, asset: sx.asset, expiresAt: new Date(sx.expires_at).toISOString(),
-      settleTxHash: sx.settle_tx_hash, steviloBremenitev: dbx.countX402Debits(sx.session_id)
+      settleTxHash: sx.settle_tx_hash, debitCount: dbx.countX402Debits(sx.session_id)
     } });
   });
 
-  // lokalna bremenitev v2 (atomske enote; NIČ verige — glej mapo 03 za podrobnosti)
-  app.get(RES_X402_MERJENO, (req, res) => {
+  // local debit v2 (atomic units; NO chain — see folder 03 for the details)
+  app.get(RES_X402_METERED, (req, res) => {
     const payer = req.header('X-Payer'), sessionId = req.header('X-Session'), nonce = req.header('X-Nonce'), signature = req.header('X-Signature');
     const maxAtomic = req.header('X-Max-Atomic') || PRICE_ATOMIC_PER_CALL.toString();
     if (!payer || !sessionId || !nonce || !signature) {
       res.setHeader('X-Server-Ms', sMs(req));
       return res.status(402).json({ error: 'payment_required', metered: {
-        mode: 'prepaid-session-x402', openEndpoint: '/x402/merjeno/session/open',
+        mode: 'prepaid-session-x402', openEndpoint: '/x402/metered/session/open',
         priceAtomicPerCall: PRICE_ATOMIC_PER_CALL.toString(),
         signedHeaders: ['X-Payer', 'X-Session', 'X-Nonce', 'X-Signature', 'X-Max-Atomic'],
-        message: 'metered-debit-v2:{payer}:{session}:{nonce}:' + RES_X402_MERJENO + ':{maxAtomic}:{network}:{asset}'
+        message: 'metered-debit-v2:{payer}:{session}:{nonce}:' + RES_X402_METERED + ':{maxAtomic}:{network}:{asset}'
       } });
     }
-    let payerAddr; try { payerAddr = ethers.getAddress(payer); } catch { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Neveljaven naslov plačnika' }); }
-    if (!/^\d{1,32}$/.test(String(maxAtomic))) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Neveljaven X-Max-Atomic' }); }
+    let payerAddr; try { payerAddr = ethers.getAddress(payer); } catch { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Invalid payer address' }); }
+    if (!/^\d{1,32}$/.test(String(maxAtomic))) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Invalid X-Max-Atomic' }); }
     const nonceTs = parseInt(String(nonce).split('-')[0], 10);
-    if (!Number.isFinite(nonceTs) || Math.abs(Date.now() - nonceTs) > DEBIT_MAX_AGE_MS) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Zastarel ali napačen nonce' }); }
-    let recovered; try { recovered = ethers.verifyMessage(debitMessageV2(payerAddr, sessionId, nonce, RES_X402_MERJENO, maxAtomic), signature); }
-    catch { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Napačen podpis' }); }
-    if (recovered.toLowerCase() !== payerAddr.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Podpis se ne ujema s plačnikom' }); }
+    if (!Number.isFinite(nonceTs) || Math.abs(Date.now() - nonceTs) > DEBIT_MAX_AGE_MS) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Stale or invalid nonce' }); }
+    let recovered; try { recovered = ethers.verifyMessage(debitMessageV2(payerAddr, sessionId, nonce, RES_X402_METERED, maxAtomic), signature); }
+    catch { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Invalid signature' }); }
+    if (recovered.toLowerCase() !== payerAddr.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'The signature does not match the payer' }); }
     const sx = dbx.getX402Session(sessionId);
-    if (!sx) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(404).json({ error: 'Seja ne obstaja' }); }
-    if (sx.payer_address.toLowerCase() !== payerAddr.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Seja ne pripada temu plačniku' }); }
+    if (!sx) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(404).json({ error: 'The session does not exist' }); }
+    if (sx.payer_address.toLowerCase() !== payerAddr.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'The session does not belong to this payer' }); }
     const reading = nextReading();
     const price = PRICE_ATOMIC_PER_CALL;
-    if (price > BigInt(maxAtomic)) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Cena presega podpisani maksimum', priceAtomic: price.toString(), maxAtomic }); }
-    const result = dbx.debitX402({ sessionId, amountAtomic: price.toString(), nonce, requestPath: RES_X402_MERJENO, bytes: null });
+    if (price > BigInt(maxAtomic)) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'The price exceeds the signed maximum', priceAtomic: price.toString(), maxAtomic }); }
+    const result = dbx.debitX402({ sessionId, amountAtomic: price.toString(), nonce, requestPath: RES_X402_METERED, bytes: null });
     if (!result.ok) {
       res.setHeader('X-Server-Ms', sMs(req));
-      if (result.reason === 'nonce_reused') return res.status(403).json({ error: 'Nonce že uporabljen (replay zavrnjen)' });
-      if (result.reason === 'session_expired') return res.status(403).json({ error: 'Seja je potekla (čas veljavnosti)' });
-      if (result.reason === 'session_closed') return res.status(403).json({ error: 'Seja je zaprta' });
-      if (result.reason === 'no_session') return res.status(404).json({ error: 'Seja ne obstaja' });
-      if (result.reason === 'budget_exceeded') return res.status(402).json({ error: 'Presežen proračun seje', reason: 'budget_exceeded', budgetRemainingAtomic: result.budgetRemainingAtomic ?? '0' });
-      return res.status(402).json({ error: 'Nezadostno dobroimetje', reason: 'insufficient_balance', balanceAtomic: result.balanceAtomic ?? '0' });
+      if (result.reason === 'nonce_reused') return res.status(403).json({ error: 'Nonce already used (replay rejected)' });
+      if (result.reason === 'session_expired') return res.status(403).json({ error: 'The session has expired (time to live)' });
+      if (result.reason === 'session_closed') return res.status(403).json({ error: 'The session is closed' });
+      if (result.reason === 'no_session') return res.status(404).json({ error: 'The session does not exist' });
+      if (result.reason === 'budget_exceeded') return res.status(402).json({ error: 'The session budget has been exceeded', reason: 'budget_exceeded', budgetRemainingAtomic: result.budgetRemainingAtomic ?? '0' });
+      return res.status(402).json({ error: 'Insufficient credit', reason: 'insufficient_balance', balanceAtomic: result.balanceAtomic ?? '0' });
     }
     res.set('X-Charged-Atomic', price.toString());
     res.set('X-Balance-Atomic', result.balanceAtomic);
     res.set('X-Budget-Remaining-Atomic', result.budgetRemainingAtomic);
     res.set('X-Session-Expires', new Date(sx.expires_at).toISOString());
     res.setHeader('X-Server-Ms', sMs(req));
-    res.json({ success: true, reading, metered: { chargedAtomic: price.toString(), balanceAtomic: result.balanceAtomic, veriga: false } });
+    res.json({ success: true, reading, metered: { chargedAtomic: price.toString(), balanceAtomic: result.balanceAtomic, chain: false } });
   });
 
   app.get('/x402/payment/:id', (req, res) => {
     const row = dbx.getPayment(String(req.params.id).slice(0, 160));
     res.setHeader('X-Server-Ms', sMs(req));
-    if (!row) return res.status(404).json({ error: 'Neznano plačilo' });
+    if (!row) return res.status(404).json({ error: 'Unknown payment' });
     res.json({ paymentId: row.payment_id, status: row.status, resource: row.resource, network: row.network,
       asset: row.asset, amountAtomic: row.amount_atomic, payer: row.payer, payTo: row.pay_to,
-      txHash: row.tx_hash, blok: row.block_number, gasEnote: row.gas_used, cenaGasWei: row.effective_gas_price });
+      txHash: row.tx_hash, block: row.block_number, gasUnits: row.gas_used, gasPriceWei: row.effective_gas_price });
   });
 
-  logger.info({ x402: x402.summary() }, 'x402 v2 samofacilitirani način priklopljen (enkratno + tx + merjena polnitev)');
+  logger.info({ x402: x402.summary() }, 'x402 v2 self-facilitated mode mounted (single + tx + metered top-up)');
 }
 
 // ════════════════════════════ SSE M2M RUNNERS ═══════════════════════════════
@@ -616,12 +617,12 @@ function sse(res) {
   return (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
-// Enkratni žeton za zagon (CSRF): stran ga prebere z iste izvorne strani in ga doda
-// v naslov EventSource. Tuja stran ga ne more prebrati — `cors()` ne dovoljuje
-// poverilnic, krmarjenje pa odgovora ne izpostavi skripti.
-app.get('/run/zeton', (req, res) => {
+// One-time run token (CSRF): the page reads it from the same origin and appends it
+// to the EventSource URL. A foreign page cannot read it — `cors()` does not allow
+// credentials, and a navigation does not expose the response to a script.
+app.get('/run/token', (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
-  res.json({ zeton: auth.csrfFor(req) });
+  res.json({ token: auth.csrfFor(req) });
 });
 
 app.get('/run/tx', auth.requireCsrf, async (req, res) => {
@@ -630,60 +631,60 @@ app.get('/run/tx', auth.requireCsrf, async (req, res) => {
   let alive = true; req.on('close', () => { alive = false; });
   try {
     await runner.runTx({ baseURL: `http://127.0.0.1:${PORT}`, network: NETWORK, rpcUrl: RPC_URL, mock: MOCK_VERIFY, payerPk: PAYER_PK, receiver: RECEIVER, priceWei: PRICE_WEI_PER_READING.toString(), queries, confirmations: MIN_CONFIRMATIONS, isAlive: () => alive, emit, adminToken: auth.token() });
-  } catch (e) { emit('napaka', { message: e.message }); }
-  if (alive) emit('konec', { ok: true });
+  } catch (e) { emit('error', { message: e.message }); }
+  if (alive) emit('end', { ok: true });
   if (!res.writableEnded) res.end();
 });
 
-app.get('/run/merjeno', auth.requireCsrf, async (req, res) => {
+app.get('/run/metered', auth.requireCsrf, async (req, res) => {
   const emit = sse(res);
   const debits = Math.max(1, Math.min(500, parseInt(req.query.debits || '20', 10)));
   let alive = true; req.on('close', () => { alive = false; });
   try {
-    await runner.runMerjeno({ baseURL: `http://127.0.0.1:${PORT}`, network: NETWORK, rpcUrl: RPC_URL, mock: MOCK_VERIFY, payerPk: PAYER_PK, receiver: RECEIVER, resource: RES_MERJENO, debits, topupWei: process.env.TOPUP_WEI || '2500000000000', confirmations: MIN_CONFIRMATIONS, isAlive: () => alive, emit, adminToken: auth.token(),
-      // Sejo, ki jo je odprl vgrajeni agent, poveži s sejo brskalnika, ki je zagon sprožila.
+    await runner.runMetered({ baseURL: `http://127.0.0.1:${PORT}`, network: NETWORK, rpcUrl: RPC_URL, mock: MOCK_VERIFY, payerPk: PAYER_PK, receiver: RECEIVER, resource: RES_METERED, debits, topupWei: process.env.TOPUP_WEI || '2500000000000', confirmations: MIN_CONFIRMATIONS, isAlive: () => alive, emit, adminToken: auth.token(),
+      // Link the session opened by the in-process agent to the browser session that triggered the run.
       onSession: (sessionId, payerAddress) => { linkSid(req, 'metered_session', sessionId); notePayer(req, payerAddress); } });
-  } catch (e) { emit('napaka', { message: e.message }); }
-  if (alive) emit('konec', { ok: true });
+  } catch (e) { emit('error', { message: e.message }); }
+  if (alive) emit('end', { ok: true });
   if (!res.writableEnded) res.end();
 });
 
-// x402 zaganjalnika — enaka CSRF zaščita kot /run/tx in /run/merjeno
+// x402 runners — the same CSRF protection as /run/tx and /run/metered
 app.get('/run/x402-tx', auth.requireCsrf, async (req, res) => {
-  if (!x402.enabled) { res.status(404).json({ error: 'x402 način ni vklopljen (X402_MODE=self)' }); return; }
+  if (!x402.enabled) { res.status(404).json({ error: 'x402 mode is not enabled (X402_MODE=self)' }); return; }
   const emit = sse(res);
   const queries = Math.max(1, Math.min(200, parseInt(req.query.queries || '20', 10)));
   let alive = true; req.on('close', () => { alive = false; });
   try {
-    await runner.runX402Tx({ baseURL: `http://127.0.0.1:${PORT}`, mock: x402.MOCK, x402PayerPk: X402_PAYER_PK, omrezje: x402.config.network, cenaAtomic: x402.config.priceAtomic, queries, isAlive: () => alive, emit, adminToken: auth.token() });
-  } catch (e) { emit('napaka', { message: e.message }); }
-  if (alive) emit('konec', { ok: true });
+    await runner.runX402Tx({ baseURL: `http://127.0.0.1:${PORT}`, mock: x402.MOCK, x402PayerPk: X402_PAYER_PK, network: x402.config.network, priceAtomic: x402.config.priceAtomic, queries, isAlive: () => alive, emit, adminToken: auth.token() });
+  } catch (e) { emit('error', { message: e.message }); }
+  if (alive) emit('end', { ok: true });
   if (!res.writableEnded) res.end();
 });
 
-app.get('/run/x402-merjeno', auth.requireCsrf, async (req, res) => {
-  if (!x402.enabled) { res.status(404).json({ error: 'x402 način ni vklopljen (X402_MODE=self)' }); return; }
+app.get('/run/x402-metered', auth.requireCsrf, async (req, res) => {
+  if (!x402.enabled) { res.status(404).json({ error: 'x402 mode is not enabled (X402_MODE=self)' }); return; }
   const emit = sse(res);
   const debits = Math.max(1, Math.min(500, parseInt(req.query.debits || '20', 10)));
   let alive = true; req.on('close', () => { alive = false; });
   try {
-    await runner.runX402Merjeno({ baseURL: `http://127.0.0.1:${PORT}`, mock: x402.MOCK, x402PayerPk: X402_PAYER_PK, omrezje: x402.config.network, debits, isAlive: () => alive, emit, adminToken: auth.token(),
+    await runner.runX402Metered({ baseURL: `http://127.0.0.1:${PORT}`, mock: x402.MOCK, x402PayerPk: X402_PAYER_PK, network: x402.config.network, debits, isAlive: () => alive, emit, adminToken: auth.token(),
       onSession: (sessionId, payerAddress) => { linkSid(req, 'x402_metered_session', sessionId); notePayer(req, payerAddress); } });
-  } catch (e) { emit('napaka', { message: e.message }); }
-  if (alive) emit('konec', { ok: true });
+  } catch (e) { emit('error', { message: e.message }); }
+  if (alive) emit('end', { ok: true });
   if (!res.writableEnded) res.end();
 });
 
 // ── error handler + sweeper + start ──────────────────────────────────────────
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
-  // Napake razčlenjevalnika telesa (`express.json`) nosijo svoj status 400: pokvarjen
-  // JSON je napaka odjemalca in ne odpoved strežnika. Brez tega bi vsako skazano telo
-  // izgledalo kot 500 — pri varnostnem preizkusu lažno kot ranljivost, v dnevniku pa šum.
+  // Body-parser errors (`express.json`) carry their own status 400: broken JSON is a
+  // client error, not a server failure. Without this, every malformed body would look
+  // like a 500 — falsely a vulnerability in the security test, and noise in the log.
   const code = Number.isInteger(err.status) && err.status >= 400 && err.status < 500 ? err.status : 500;
   const log = req.log || logger;
   if (code === 500) log.error({ err: err.message }, 'Unhandled');
-  else log.warn({ err: err.message, code }, 'Slaba zahteva');
+  else log.warn({ err: err.message, code }, 'Bad request');
   if (!res.headersSent) res.status(code).json(code === 500 ? { error: 'Internal server error' } : { error: 'Bad request', message: err.message });
 });
 setInterval(() => { try { db.sweep(); if (dbx) dbx.x402Sweep(); } catch {} }, 60_000).unref();

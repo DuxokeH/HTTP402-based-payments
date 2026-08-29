@@ -1,78 +1,80 @@
 # ─────────────────────────────────────────────────────────────────────────────
-#  Produkcijska namestitev mape 04_spletisce_posrednik — POSREDNIŠKA VEJA
+#  Production deployment of the 04_website_facilitator folder — FACILITATOR BRANCH
 #
-#  Tri storitve namesto ene, ker sta trgovec in posrednik LOČENA PROCESA.
-#  Prav to loči topologijo (b) od (a): če bi bila v istem procesu, dodatnih
-#  skokov ne bi bilo in meritvi latence ne bi merili ničesar.
+#  Three services instead of one, because the merchant and the facilitator are
+#  SEPARATE PROCESSES. That is exactly what separates topology (b) from (a): if
+#  they lived in the same process, there would be no extra hops and the latency
+#  measurements would measure nothing.
 #
-#    posrednik  — edini z dostopom do verige (JSON-RPC), vrata 4000
-#    trgovec    — spletišče in vsi trije tokovi, brez verige, vrata 8081
-#    caddy      — TLS za javni dostop
+#    facilitator  — the only one with chain access (JSON-RPC), port 4000
+#    merchant    — the website and all three flows, no chain access, port 8081
+#    caddy      — TLS for public access
 #
-#  Zagon:
-#    cp posrednik/.env.example posrednik/.env
-#    cp streznik/.env.example  streznik/.env
-#    cp streznik/wallet.example.json streznik/wallet.json
-#    # v Caddyfile vpiši svojo domeno
-#    docker compose up -d posrednik
-#    grep ZETON posrednik/data/admin-credentials.txt     # → POSREDNIK_TOKEN v streznik/.env
+#  Startup:
+#    cp facilitator/.env.example facilitator/.env
+#    cp server/.env.example  server/.env
+#    cp server/wallet.example.json server/wallet.json
+#    # enter your domain in the Caddyfile
+#    docker compose up -d facilitator
+#    grep TOKEN facilitator/data/admin-credentials.txt     # → FACILITATOR_TOKEN in server/.env
 #    docker compose up -d
 #
-#  Ime projekta je izrecno: privzeto bi ga Compose izpeljal iz imena mape in bi
-#  se ta veja tiho delila omrežje in nosilce z mapo 05_spletisce.
+#  The project name is explicit: by default Compose would derive it from the
+#  folder name, and this branch would silently share the network and volumes
+#  with the 05_website_direct folder.
 #
-#  Za Wireshark dokaze odkomentiraj `ports` pri OBEH storitvah in zajemi promet
-#  na 8081 (odjemalec↔trgovec) in 4000 (odjemalec/trgovec↔posrednik).
-#  Šele oboje skupaj pokaže vseh 5 izmenjav posredniškega toka — glej ../README.md.
+#  For Wireshark proof, uncomment `ports` on BOTH services and capture traffic
+#  on 8081 (client↔merchant) and 4000 (client/merchant↔facilitator).
+#  Only both together show all 5 exchanges of the facilitator flow — see ../README.md.
 # ─────────────────────────────────────────────────────────────────────────────
 
-name: x402-posrednik
+name: x402-facilitator
 
 services:
-  posrednik:
-    build: ./posrednik
-    image: x402-posrednik:latest
-    container_name: x402-posrednik
+  facilitator:
+    build: ./facilitator
+    image: x402-facilitator:latest
+    container_name: x402-facilitator
     restart: unless-stopped
     env_file:
-      - ./posrednik/.env
+      - ./facilitator/.env
     volumes:
-      - ./posrednik/data:/app/data
+      - ./facilitator/data:/app/data
     expose:
       - "4000"
-    # Plačnik (brskalnik ali zunanji agent) pošlje /submit-payment NARAVNOST sem,
-    # zato mora biti posrednik dosegljiv od zunaj, kadar plačnik ni na tem gostitelju.
+    # The payer (browser or external agent) sends /submit-payment STRAIGHT here,
+    # so the facilitator must be reachable from outside whenever the payer is not on this host.
     # ports:
     #   - "4000:4000"
     networks:
       - x402-net
 
-  trgovec:
-    build: ./streznik
-    image: x402-spletisce-posrednik:latest
-    container_name: x402-spletisce-posrednik
+  merchant:
+    build: ./server
+    image: x402-website-facilitator:latest
+    container_name: x402-website-facilitator
     restart: unless-stopped
     env_file:
-      - ./streznik/.env
+      - ./server/.env
     environment:
-      # Znotraj omrežja Compose je posrednik dosegljiv po imenu storitve.
-      POSREDNIK_URL: http://posrednik:4000
+      # Inside the Compose network the facilitator is reachable by its service name.
+      FACILITATOR_URL: http://facilitator:4000
     volumes:
-      - ./streznik/data:/app/data
-      - ./streznik/wallet.json:/app/wallet.json:ro
+      - ./server/data:/app/data
+      - ./server/wallet.json:/app/wallet.json:ro
     expose:
       - "8081"
-    # Odkomentiraj samo za zajem po navadnem HTTP (LAN/loopback):
+    # Uncomment only for capture over plain HTTP (LAN/loopback):
     # ports:
     #   - "8081:8081"
     depends_on:
-      - posrednik
+      - facilitator
     networks:
       - x402-net
 
   caddy:
     image: caddy:2-alpine
-    container_name: x402-posrednik-caddy
+    container_name: x402-facilitator-caddy
     restart: unless-stopped
     ports:
       - "80:80"
@@ -82,7 +84,7 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
-      - trgovec
+      - merchant
     networks:
       - x402-net
 

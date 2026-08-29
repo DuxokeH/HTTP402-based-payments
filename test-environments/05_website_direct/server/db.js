@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Combined SQLite layer for the SHOWCASE site (folder 05_spletisce).
+ * Combined SQLite layer for the SHOWCASE site (folder 05_website_direct).
  * Holds all three payment modes in ONE database:
  *   - one-time + per-tx IoT: payment_requests, payment_proofs, redeemed_tx_hashes
  *   - metered session:       sessions, session_events
@@ -10,7 +10,7 @@
  * contracts — the metered mode uses off-chain EIP-191 signed debits; smart
  * contracts are future work).
  *
- * Plus (docs/IDENTITETA.md §2, izboljšava B): sessions_web / sessions_web_links —
+ * Plus (docs/IDENTITY.md §2, improvement B): sessions_web / sessions_web_links —
  * a browser-session correlation store keyed by the `sid` cookie. It exists ONLY
  * to tie the events of one visit together (402 → proof → access). It is NEVER
  * consulted for authorization, so a missing/changed `sid` — or a changed IP —
@@ -24,7 +24,7 @@ const path = require('path');
 const DATA_DIR = path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const db = new Database(process.env.DB_PATH || path.join(DATA_DIR, 'spletisce_neposredno.db'));
+const db = new Database(process.env.DB_PATH || path.join(DATA_DIR, 'website_direct.db'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
@@ -145,17 +145,17 @@ function sessionView(s) {
     expired: s.expires_at < Date.now(), closed: !!s.closed_at };
 }
 
-// ── web session correlation (izboljšava B) ───────────────────────────────────
-// KORELACIJA, NE AVTORIZACIJA. Nobena od teh funkcij ne sme nikoli odločati o
-// dostopu; IP se hrani izključno kot mehka telemetrija (števec menjav), da je
-// mogoče *pokazati*, da menjava IP na potek ne vpliva.
+// ── web session correlation (improvement B) ──────────────────────────────────
+// CORRELATION, NOT AUTHORIZATION. None of these functions may ever decide about
+// access; the IP is kept purely as soft telemetry (a change counter), so that it is
+// possible to *show* that a change of IP has no effect on the flow.
 const touchWebSession = db.transaction(({ sid, ip, userAgent, ttlSeconds }) => {
   const now = Date.now(), expires = now + ttlSeconds * 1000;
   const ua = userAgent ? String(userAgent).slice(0, 120) : null;
   const cur = S.getWeb.get(sid);
   if (!cur || cur.expires_at < now) {
-    // Potekla seja → začni čisto na novo. Tudi povezave je treba pobrisati, sicer bi
-    // nova seja pod istim sid podedovala zgodovino prejšnjega obiska.
+    // Expired session → start completely fresh. The links must be deleted too, otherwise
+    // a new session under the same sid would inherit the history of the previous visit.
     if (cur) { S.delWeb.run(sid); S.delWebLinks.run(sid); }
     S.insWeb.run(sid, now, now, expires, ip || null, ip || null, ua);
     return { created: true, ipChanged: false };
@@ -170,7 +170,7 @@ function getWebSession(sid) { const r = S.getWeb.get(sid); if (!r) return null; 
 function webSessionView(sid) {
   const r = getWebSession(sid);
   if (!r) return null;
-  // sid je HttpOnly — brskalcu vrnemo le okrajšavo; IP naslovov ne vračamo, le število menjav.
+  // sid is HttpOnly — we return only a short form to the browser; we do not return IP addresses, only the number of changes.
   const shortRef = (kind, ref) => (kind === 'proof_token' ? `${ref.slice(0, 14)}…` : ref);
   return {
     sidShort: r.sid.slice(0, 8), createdAt: new Date(r.created_at).toISOString(),

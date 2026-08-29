@@ -1,5 +1,5 @@
 {
-  "name": "x402-spletisce-neposredno",
+  "name": "x402-website-direct",
   "version": "1.0.0",
   "description": "X402 showcase site — one-time (MetaMask) + 20-tx M2M + metered session, live SSE dashboard",
   "main": "server.js",
@@ -8,7 +8,7 @@
     "start": "node server.js",
     "dev": "NODE_ENV=development node server.js",
     "mock": "NODE_ENV=development MOCK_VERIFY=true node server.js",
-    "build:klient": "esbuild src/x402-klient-vir.js --bundle --minify --format=iife --outfile=public/x402-klient.js"
+    "build:client": "esbuild src/x402-browser.src.js --bundle --minify --format=iife --outfile=public/x402-browser.js"
   },
   "license": "MIT",
   "dependencies": {

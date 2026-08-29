@@ -2,8 +2,8 @@
 
 /**
  * ============================================================================
- *  MOCK IoT NAPRAVA — one on-chain transaction PER reading
- *  (folder 02_avtomatska_placila_transakcije)
+ *  MOCK IoT DEVICE — one on-chain transaction PER reading
+ *  (folder 02_machine_payments_per_request)
  * ============================================================================
  *
  *  Role reversal vs. folder 01:
@@ -42,8 +42,8 @@ const { z } = require('zod');
 
 const db = require('./db');
 const authLib = require('./auth');
-// Uradni x402 v2 — VZPOREDNI plačilni način (X402_MODE=off|self). Ob 'off' se
-// /x402/* poti ne priklopijo in mapa deluje bajt-enako kot doslej.
+// Official x402 v2 — PARALLEL payment mode (X402_MODE=off|self). With 'off' the
+// /x402/* routes are not mounted and the folder behaves byte-identically as before.
 const x402 = require('./x402');
 const dbx = x402.enabled ? require('./db_x402') : null;
 
@@ -112,16 +112,16 @@ app.use((req, res, next) => { req.tStart = performance.now(); req.reqId = uuidv4
 const limiter = rateLimit({ windowMs: 60_000, max: parseInt(process.env.RATE_PER_MIN || '240', 10), standardHeaders: true, legacyHeaders: false });
 const sMs = (req) => (performance.now() - req.tStart).toFixed(3);
 
-// ══════════ SKRBNIŠKA PRIJAVA — naprava je zaprta ════════════════════════════
-// Javna ostaneta samo /prijava (+ /odjava) in /health. Vse ostalo (/config,
-// /reading, /verify-payment) zahteva prijavo ali strojni žeton.
-// Merilni agent se predstavi z glavo `Authorization: Bearer <ZETON>`; žeton dobiš
-// na napravi z:  grep ZETON data/admin-credentials.txt
+// ══════════ ADMIN LOGIN — the device is closed ═══════════════════════════════
+// Only /login (+ /logout) and /health remain public. Everything else (/config,
+// /reading, /verify-payment) requires a login or a machine token.
+// The measurement agent identifies itself with the header `Authorization: Bearer
+// <TOKEN>`; get the token on the device with:  grep TOKEN data/admin-credentials.txt
 const auth = authLib.create({
   dataDir: path.join(__dirname, 'data'),
-  appName: 'X402 IoT naprava — transakcije (mapa 02)',
+  appName: 'X402 IoT device — transactions (folder 02)',
   logger,
-  homePath: '/config'          // naprava nima spletne strani; po prijavi pokaži nastavitve
+  homePath: '/config'          // the device has no web page; show the config after login
 });
 auth.mount(app);
 app.use(auth.requireAdmin);
@@ -168,16 +168,16 @@ app.get('/reading', limiter, (req, res) => {
     res.setHeader('X-Server-Ms', sMs(req));
     return res.status(402).json({
       error: 'Payment Required',
-      message: 'Za odčitek senzorja je potrebno plačilo.',
+      message: 'Payment is required for a sensor reading.',
       payment: { requestId, resource: RESOURCE, to: DEVICE_WALLET, amount: priceEth, priceWei: PRICE_WEI_PER_READING.toString(), currency: 'ETH', network: NETWORK, expiresInSeconds: PAYMENT_REQUEST_TTL_SECONDS }
     });
   }
 
   const proof = db.getProof(proofToken);
-  if (!proof) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Neveljaven ali potekel dokazni žeton' }); }
-  if (proof.consumed_at) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Dokazni žeton je že bil porabljen' }); }
-  if (proof.resource !== RESOURCE) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Žeton ne velja za ta vir' }); }
-  if (!db.consumeProof(proofToken)) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(409).json({ error: 'Žeton porabljen sočasno' }); }
+  if (!proof) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Invalid or expired proof token' }); }
+  if (proof.consumed_at) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Proof token has already been consumed' }); }
+  if (proof.resource !== RESOURCE) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Token is not valid for this resource' }); }
+  if (!db.consumeProof(proofToken)) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(409).json({ error: 'Token consumed concurrently' }); }
 
   const reading = nextReading();
   req.log.info({ reading_id: reading.reading_id }, 'reading served');
@@ -192,8 +192,8 @@ app.post('/verify-payment', limiter, async (req, res) => {
   const { requestId, txHash, payerAddress } = parsed.data;
 
   const pr = db.getPaymentRequest(requestId);
-  if (!pr) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Neveljavna ali potekla plačilna zahteva' }); }
-  if (db.isTxRedeemed(txHash)) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Transakcija je že bila unovčena' }); }
+  if (!pr) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Invalid or expired payment request' }); }
+  if (db.isTxRedeemed(txHash)) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Transaction has already been redeemed' }); }
 
   let verification, chainReadMs = 0;
   if (MOCK_VERIFY) {
@@ -204,35 +204,35 @@ app.post('/verify-payment', limiter, async (req, res) => {
     chainReadMs = performance.now() - t0;
     res.setHeader('X-Chain-Read-Ms', chainReadMs.toFixed(3));
   }
-  if (!verification.verified) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Preverjanje transakcije ni uspelo', message: verification.error }); }
+  if (!verification.verified) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Transaction verification failed', message: verification.error }); }
   const tx = verification.tx;
-  if (tx.status !== 1) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Transakcija na verigi ni uspela' }); }
-  if (tx.to?.toLowerCase() !== DEVICE_WALLET.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Napačen prejemnik' }); }
-  if (tx.from.toLowerCase() !== payerAddress.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Neujemanje plačnika' }); }
-  if (BigInt(tx.value) < PRICE_WEI_PER_READING) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Prenizek znesek', message: `Zahtevano ${priceEth} ETH` }); }
+  if (tx.status !== 1) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Transaction failed on chain' }); }
+  if (tx.to?.toLowerCase() !== DEVICE_WALLET.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Wrong recipient' }); }
+  if (tx.from.toLowerCase() !== payerAddress.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Payer mismatch' }); }
+  if (BigInt(tx.value) < PRICE_WEI_PER_READING) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Amount too low', message: `Required ${priceEth} ETH` }); }
 
   const proofToken = `proof_${uuidv4()}`;
   try {
     db.finalizeVerification({ proofToken, requestId, resource: pr.resource, txHash: tx.hash, blockNumber: tx.blockNumber, payerAddress: tx.from, recipient: tx.to, amountEth: ethers.formatEther(tx.value), ttlSeconds: PROOF_TOKEN_TTL_SECONDS });
   } catch (err) {
-    if (err.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Transakcija je že bila unovčena' }); }
+    if (err.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Transaction has already been redeemed' }); }
     throw err;
   }
   res.setHeader('X-Server-Ms', sMs(req));
   res.json({ success: true, proofToken, resource: pr.resource, verified: true, transaction: { hash: tx.hash, blockNumber: tx.blockNumber, from: tx.from, to: tx.to, value: ethers.formatEther(tx.value) + ' ETH', gasUsed: tx.gasUsed } });
 });
 
-// ══════════ x402 v2 (VZPOREDNI NAČIN) — GET /x402/reading ═══════════════════
-// 20 odčitkov = 20 x402 exact poravnav (ETH — testno). NAMERNO brez
-// paketne poravnave — mapa 02 ostane draga per-plačilna osnova; primerjava z
-// mapo 03 (1 polnitev + N lokalnih bremenitev) je bistvo poskusa.
-// Bearer žeton (auth.requireAdmin zgoraj) ostane AVTENTIKACIJA; x402 je
-// PLAČILO. Ena ne nadomešča druge.
+// ══════════ x402 v2 (PARALLEL MODE) — GET /x402/reading ═════════════════════
+// 20 readings = 20 x402 exact settlements (ETH — testnet). DELIBERATELY no
+// batch settlement — folder 02 stays the expensive per-payment baseline; the
+// comparison with folder 03 (1 top-up + N local debits) is the point of the
+// experiment. The Bearer token (auth.requireAdmin above) remains AUTHENTICATION;
+// x402 is PAYMENT. Neither replaces the other.
 if (x402.enabled) {
   const { middleware: x402Middleware, x402Route } = x402.buildMiddleware({
     dbx, logger,
     routes: {
-      'GET /x402/reading': x402.routeConfig('IoT odčitek — x402 exact, plačilo NA ODČITEK (Ethereum Sepolia, ETH — testno)')
+      'GET /x402/reading': x402.routeConfig('IoT reading — x402 exact, payment PER READING (Ethereum Sepolia, ETH — testnet)')
     }
   });
 
@@ -247,34 +247,34 @@ if (x402.enabled) {
     res.setHeader('X-Server-Ms', sMs(req));
     res.json({
       success: true, reading,
-      payment: { protokol: 'x402-self', shema: 'exact', omrezje: x402.config.network, sredstvo: x402.config.assetName, txHash: pr ? pr.txHash : null, placnikGasa: 'streznik' }
+      payment: { protocol: 'x402-self', scheme: 'exact', network: x402.config.network, asset: x402.config.assetName, txHash: pr ? pr.txHash : null, gasPayer: 'server' }
     });
   }));
 
   app.get('/x402/payment/:id', (req, res) => {
     const row = dbx.getPayment(String(req.params.id).slice(0, 160));
     res.setHeader('X-Server-Ms', sMs(req));
-    if (!row) return res.status(404).json({ error: 'Neznano plačilo' });
+    if (!row) return res.status(404).json({ error: 'Unknown payment' });
     res.json({
       paymentId: row.payment_id, status: row.status, resource: row.resource,
       network: row.network, asset: row.asset, amountAtomic: row.amount_atomic,
       payer: row.payer, payTo: row.pay_to, txHash: row.tx_hash,
-      blok: row.block_number, gasEnote: row.gas_used, cenaGasWei: row.effective_gas_price,
+      block: row.block_number, gasUnits: row.gas_used, gasPriceWei: row.effective_gas_price,
       poskusi: row.attempt
     });
   });
 
-  logger.info({ x402: x402.summary() }, 'x402 v2 vzporedni način priklopljen (/x402/reading)');
+  logger.info({ x402: x402.summary() }, 'x402 v2 parallel mode mounted (/x402/reading)');
 }
 
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
-  // Napake razčlenjevalnika telesa (`express.json`) nosijo svoj status 400: pokvarjen
-  // JSON je napaka odjemalca in ne odpoved strežnika.
+  // Body-parser errors (`express.json`) carry their own 400 status: malformed
+  // JSON is a client error, not a server failure.
   const code = Number.isInteger(err.status) && err.status >= 400 && err.status < 500 ? err.status : 500;
   const log = req.log || logger;
   if (code === 500) log.error({ err: err.message }, 'Unhandled');
-  else log.warn({ err: err.message, code }, 'Slaba zahteva');
+  else log.warn({ err: err.message, code }, 'Bad request');
   if (!res.headersSent) res.status(code).json(code === 500 ? { error: 'Internal server error' } : { error: 'Bad request', message: err.message });
 });
 setInterval(() => { db.sweep(); if (dbx) dbx.x402Sweep(); }, 60_000).unref();

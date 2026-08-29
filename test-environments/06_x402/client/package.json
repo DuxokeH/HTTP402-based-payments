@@ -1,13 +1,13 @@
 {
-  "name": "x402-zdruzena-klient",
+  "name": "x402-merged-client",
   "version": "1.0.0",
   "description": "Headless measurement client for the MERGED one-time payment flow (4 HTTP messages)",
   "type": "commonjs",
   "scripts": {
-    "start": "node merilni_klient.js --mock --runs 30",
-    "mock": "node merilni_klient.js --mock --runs 50",
-    "real": "node merilni_klient.js --real --runs 5 --pause-ms 1500",
-    "security": "node merilni_klient.js --security",
+    "start": "node measurement_client.js --mock --runs 30",
+    "mock": "node measurement_client.js --mock --runs 50",
+    "real": "node measurement_client.js --real --runs 5 --pause-ms 1500",
+    "security": "node measurement_client.js --security",
     "gen-wallet": "node generate-wallet.js"
   },
   "dependencies": {

@@ -1,376 +1,393 @@
-# 05 — Spletišče, neposredna topologija (a)
+# 05 — Website, direct topology (a)
 
-En sam strežniški proces postreže spletišče s **tremi zavihki** — enkratno plačilo, avtomatska
-plačila po transakciji in merjena predplačniška seja — vse na enem naslovu in z živim izpisom
-poteka. Namen mape je **prikaz vseh treh plačilnih tokov v enem sistemu** (demonstracija,
-slikovna dokazila, zajem v Wiresharku), ne zbiranje merilnih vzorcev.
+A single server process serves a website with **three tabs** — one-time payment, machine
+payments per transaction, and a metered prepaid session — all at one address and with a live
+log of the flow. The purpose of this folder is to **show all three payment flows in one system**
+(demonstration, screenshot proof, Wireshark capture), not to collect measurement samples.
 
-> **Arhitektura (a) — neposredna.** Trgovec plačila preverja **sam**, neposredno na verigi prek
-> svojega ponudnika RPC; na plačilni poti ni tretje osebe. Primerjalna različica s
-> **posrednikom** (topologija (b)) je v mapi
-> [`../04_spletisce_posrednik/`](../04_spletisce_posrednik/); mapi 04 in 05 sta merilni par za
-> primerjavo obeh topologij.
+> **Architecture (a) — direct.** The merchant verifies payments **itself**, directly on chain
+> through its own RPC provider; there is no third party on the payment path. The comparison
+> variant with a **facilitator** (topology (b)) lives in
+> [`../04_website_facilitator/`](../04_website_facilitator/); folders 04 and 05 form the
+> measurement pair for comparing the two topologies.
 
-**Brez pametnih pogodb** — merjeni način temelji na off-chain podpisih EIP-191 (pametne pogodbe
-so nadaljnje delo).
+**No smart contracts** — the metered mode is built on off-chain EIP-191 signatures (smart
+contracts are future work).
 
-## Kaj poskus meri
+## What the experiment measures
 
-Mapa 05 **ne izvaja meritev in ne ustvari nobene datoteke z rezultati** (ne CSV, ne povzetka
-JSON, ne slik). Časi in dogodki zavihkov se prikazujejo samo v živo prek SSE v brskalniku in se
-nikamor ne izvozijo; strežnik v SQLite pod `streznik/data/` hrani le obratovalno stanje
-(plačilne zahteve, dokazne žetone, seje in bremenitve), ki ga potek potrebuje. Kar poskus pokaže:
+Folder 05 **runs no measurements and produces no result files at all** (no CSV, no JSON summary,
+no figures). The timings and events of the tabs are shown live over SSE in the browser only and
+are never exported anywhere; in SQLite under `server/data/` the server keeps only the
+operational state the flow needs (payment requests, proof tokens, sessions and debits). What the
+experiment does show:
 
-| Zavihek | Klasična kartica (domači tok ETH) | Kartica x402 v2 |
+| Tab | Classic card (native ETH flow) | x402 v2 card |
 |---|---|---|
-| **1 · Enkratno plačilo** | človek plača ~0,0000001 ETH prek MetaMaska → dostop do storitve; v načinu mock JS doda gumb **Demo (mock, brez MetaMask)** | MetaMask podpiše pooblastilo EIP-3009, strežnik poravna sam |
-| **2 · Avtomatska plačila (20 tx)** | gumb **Zaženi**: vgrajeni agent M2M za vsak odčitek IoT izvede **eno transakcijo na verigi**, dogodki v živo (SSE) | gumb **Zaženi (x402)**: ena poravnava x402 na poizvedbo |
-| **3 · Merjena seja** | gumb **Zaženi**: **1 polnitev** + N podpisov EIP-191 brez novih transakcij; prikaz dobroimetja, proračuna in veljavnosti | gumb **Zaženi (x402)**: 1 polnitev + N lokalnih podpisov; dogodki ločijo ON-CHAIN POLNITEV od OFF-CHAIN BREMENITEV z oznako `veriga` |
+| **1 · One-time payment** | a human pays ~0.0000001 ETH through MetaMask → access to the service; in mock mode the JS adds a **Demo (mock, no MetaMask)** button | MetaMask signs an EIP-3009 authorisation, the server settles it itself |
+| **2 · Machine payments (20 tx)** | the **Run** button: for every IoT reading the built-in M2M agent performs **one on-chain transaction**, events live (SSE) | the **Run (x402)** button: one x402 settlement per query |
+| **3 · Metered session** | the **Run** button: **1 top-up** + N EIP-191 signatures with no new transactions; shows credit, budget and validity | the **Run (x402)** button: 1 top-up + N local signatures; the events tell an ON-CHAIN TOP-UP apart from OFF-CHAIN DEBITS through the `chain` flag |
 
-Za **natančne meritve in grafe** uporabi mape 01–03 (ločeni merilni klienti in analize)
-ter mapo 04 za primerjavo topologij. To spletišče logiko iz teh map podvaja v en gostovan
-strežnik za živ prikaz.
+For **precise measurements and charts** use folders 01–03 (separate measurement clients and
+analyses) and folder 04 for the topology comparison. This website duplicates the logic of those
+folders into one hosted server for a live demonstration.
 
-Kaj se torej da pokazati tu: celoten protokolni potek (402 → plačilo → dokazilo → 200) v enem
-brskalniku, primerjavo klasičnega toka in x402 na isti strani, obnašanje seje ob menjavi omrežja
-in zajem sporočil v Wiresharku po navadnem HTTP.
+So what can be shown here: the complete protocol flow (402 → payment → proof → 200) in a single
+browser, a side-by-side comparison of the classic flow and x402 on the same page, the behaviour
+of a session across a network switch, and a Wireshark capture of the messages over plain HTTP.
 
-## Zahteve
+## Requirements
 
-- **Node.js ≥ 20** in **npm** (`better-sqlite3` se prevede iz izvorne kode; na golem sistemu
-  potrebuješ tudi `python3`, `make`, `g++`).
-- **Brskalnik z dostopom do interneta** — `public/app.js` (celoten klasični del strani) uvaža
-  knjižnico `viem` z omrežja CDN `https://esm.sh`. Brez dostopa do interneta se ta modul sploh
-  ne naloži, zato odpovejo tudi preklapljanje med zavihki, obe klasični kartici M2M in razdelek
-  „Seja in identiteta“. Kartice x402 uporabljajo lokalni sveženj `public/x402-klient.js` in CDN
-  ne potrebujejo.
-- Razširitev **MetaMask**: za klasično kartico zavihka 1 v pravem načinu (financirana denarnica
-  na Ethereum Sepolia), za kartico **x402 v2** zavihka 1 pa vedno — ta nima gumba Demo in
-  pooblastilo EIP-3009 podpiše MetaMask tudi v načinu mock.
-- Za realni način: **financirana testna denarnica** na omrežju Ethereum Sepolia (testni ETH iz
-  javnega faucet-a). Repozitorij ne vsebuje nobenih ključev — denarnico si ustvariš sam.
-- Neobvezno za oddaljeno namestitev: **Docker** in **Docker Compose** (priložena sta `Dockerfile`
-  in `docker-compose.yml` s Caddyjem za TLS).
-- Python **ni** potreben — ta mapa nima analize.
+- **Node.js ≥ 20** and **npm** (`better-sqlite3` is compiled from source; on a bare system you
+  also need `python3`, `make` and `g++`).
+- **A browser with internet access** — `public/app.js` (the entire classic part of the page)
+  imports the `viem` library from the `https://esm.sh` CDN. Without internet access that module
+  never loads at all, so tab switching, both classic M2M cards and the “Session and identity”
+  section stop working too. The x402 cards use the local `public/x402-browser.js` bundle and need
+  no CDN.
+- The **MetaMask** extension: for the classic card of tab 1 in real mode (a funded wallet on
+  Ethereum Sepolia), and for the **x402 v2** card of tab 1 always — that one has no Demo button
+  and MetaMask signs the EIP-3009 authorisation even in mock mode.
+- For real mode: a **funded test wallet** on the Ethereum Sepolia network (test ETH from a public
+  faucet). The repository contains no keys — you create the wallet yourself.
+- Optional for a remote deployment: **Docker** and **Docker Compose** (a `Dockerfile` and a
+  `docker-compose.yml` with Caddy for TLS are included).
+- Python is **not** needed — this folder has no analysis.
 
-## Struktura mape
+## Folder structure
 
 ```
-streznik/                      edina komponenta — en proces Node (vrata 8080)
-  server.js                    združen strežnik (vsi trije tokovi + SSE + sejni piškotek + statična stran)
-  runner.js                    vgrajeni agent M2M (pravi HTTP prek loopbacka + dogodki SSE)
-  auth.js                      skrbniška prijava (geslo + strojni žeton + zaščita CSRF) — glej ../README.md
-  db.js                        SQLite za vse tri klasične tokove (+ korelacija sej brskalnika)
-  x402.js                      x402 v2 — samofacilitirano preverjanje in poravnava
-  db_x402.js                   ločena SQLite baza za x402 plačila in seje
-  x402-odjemalec.js            plačnik x402 za vgrajeni agent (strani strežnika)
+server/                      the only component — a single Node process (port 8080)
+  server.js                    combined server (all three flows + SSE + session cookie + static page)
+  runner.js                    built-in M2M agent (real HTTP over loopback + SSE events)
+  auth.js                      admin login (password + machine token + CSRF protection) — see ../README.md
+  db.js                        SQLite for all three classic flows (+ browser session correlation)
+  x402.js                      x402 v2 — self-facilitated verification and settlement
+  db_x402.js                   separate SQLite database for x402 payments and sessions
+  x402-client.js            x402 payer for the built-in agent (server side)
   public/
-    index.html                 tri zavihki, vsak z dvema karticama (klasično + x402)
-    app.js                     klasične kartice (MetaMask prek viem z esm.sh) + SSE + pogled seje
-    x402-ui.js                 kartice x402 (potrebuje `window.X402Klient`)
-    x402-klient.js             ZGRAJEN sveženj za brskalnik (izhod esbuilda, ne urejaj)
+    index.html                 three tabs, each with two cards (classic + x402)
+    app.js                     classic cards (MetaMask via viem from esm.sh) + SSE + session view
+    x402-ui.js                 x402 cards (requires `window.X402Client`)
+    x402-browser.js             BUILT browser bundle (esbuild output, do not edit)
     styles.css
   src/
-    x402-klient-vir.js         vir, iz katerega esbuild zgradi public/x402-klient.js
+    x402-browser.src.js         the source esbuild builds public/x402-browser.js from
   package.json  package-lock.json  .env.example  wallet.example.json
   Dockerfile  docker-compose.yml  Caddyfile  .dockerignore
 ```
 
-Mapa `streznik/data/` ne obstaja v repozitoriju — strežnik jo ustvari ob prvem zagonu.
-Map `analiza/` in `meritve/` v tem scenariju ni.
+The `server/data/` folder does not exist in the repository — the server creates it on first start.
+There are no `analysis/` or `measurements/` folders in this scenario.
 
-## Namestitev
+## Installation
 
 ```bash
-cd streznik
-npm ci                                  # oz. npm install; vključuje devDependency esbuild
-npm run build:klient                    # samo ob spremembi src/ (glej opombo)
+cd server
+npm ci                                  # or npm install; includes the esbuild devDependency
+npm run build:client                    # only after changing src/ (see the note)
 cp .env.example .env
 cp wallet.example.json wallet.json
 ```
 
-**Korak `npm run build:klient` je posebnost te mape.** Ukaz z esbuildom zgradi
-`public/x402-klient.js` iz `src/x402-klient-vir.js`:
+**The `npm run build:client` step is specific to this folder.** The command has esbuild build
+`public/x402-browser.js` from `src/x402-browser.src.js`:
 
 ```
-esbuild src/x402-klient-vir.js --bundle --minify --format=iife --outfile=public/x402-klient.js
+esbuild src/x402-browser.src.js --bundle --minify --format=iife --outfile=public/x402-browser.js
 ```
 
-`index.html` sveženj nalaga brezpogojno (`<script src="/x402-klient.js">`), zato brez njega
-kartice x402 ne delujejo. Zgrajen sveženj je v repozitoriju priložen, tako da prvi zagon deluje
-tudi brez gradnje; ukaz zaženi znova samo, ko spremeniš `src/x402-klient-vir.js` ali datoteko
-izbrišeš. **Docker slika esbuilda ne poganja in mape `src/` ne kopira** (`Dockerfile` kopira le
-`public/`), zato mora biti sveženj na gostitelju prisoten **pred** `docker compose build`.
+`index.html` loads the bundle unconditionally (`<script src="/x402-browser.js">`), so without it
+the x402 cards do not work. The built bundle is committed to the repository, so the first run
+works even without building; re-run the command only when you change
+`src/x402-browser.src.js` or delete the file. **The Docker image does not run esbuild and does
+not copy the `src/` folder** (the `Dockerfile` copies only `public/`), so the bundle must be
+present on the host **before** `docker compose build`.
 
-**Denarnica.** `wallet.json` si ustvariš sam; repozitorij ne vsebuje nobenega ključa in
-`.gitignore` to datoteko izloči. Strežnik bere:
+**Wallet.** You create `wallet.json` yourself; the repository contains no keys and `.gitignore`
+excludes the file. The server reads:
 
-| ključ | pomen |
+| key | meaning |
 |---|---|
-| `address` | **obvezen** — naslov prejemnika plačil. V načinu mock zadošča poljuben veljaven naslov. |
-| `payerPrivateKey` | privatni ključ **financirane** denarnice, s katero vgrajeni agent plačuje v zavihkih 2 in 3 (samo realni način). |
-| `x402PayerPrivateKey` | plačnik za kartici x402 v zavihkih 2 in 3 — potreben **samo v pravem načinu**; pri `X402_MOCK=true` si vgrajeni agent za vsak tek ustvari enkratno naključno denarnico. |
-| `x402Address` | neobvezni prejemnik x402 (`payTo`); brez njega se uporabi `address`. |
-| `x402SettlerPrivateKey` | poravnalni ključ strežnika za x402 (potrebuje ETH za gas); v načinu mock ni potreben — takrat se uporabi determinističen navidezni račun. |
+| `address` | **required** — the address that receives payments. In mock mode any valid address will do. |
+| `payerPrivateKey` | the private key of a **funded** wallet the built-in agent pays from in tabs 2 and 3 (real mode only). |
+| `x402PayerPrivateKey` | the payer for the x402 cards in tabs 2 and 3 — required **only in real mode**; with `X402_MOCK=true` the built-in agent creates a single-use random wallet for every run. |
+| `x402Address` | optional x402 recipient (`payTo`); without it `address` is used. |
+| `x402SettlerPrivateKey` | the server's settlement key for x402 (needs ETH for gas); not needed in mock mode — a deterministic dummy account is used there. |
 
-Privatnega ključa nikoli ne deli in ne nalagaj v git.
+Never share a private key and never commit one to git.
 
-> **Past pri nastavitvah: `NODE_ENV`.** Pusti `NODE_ENV=development`. Pri `production`
-> strežnik **ignorira** `MOCK_VERIFY=true` in `X402_MOCK=true` (razen z `FORCE_MOCK=1`),
-> `helmet` pa doda `upgrade-insecure-requests`, zaradi česar dostop po navadnem HTTP — torej
-> ravno zajem za Wireshark — ne deluje. Enako pusti `COOKIE_SECURE=false`: zastavica `Secure`
-> se doda samodejno, ko zahteva pride po HTTPS (tudi izza Caddyja prek `X-Forwarded-Proto`).
+> **Configuration trap: `NODE_ENV`.** Leave `NODE_ENV=development`. With `production` the server
+> **ignores** `MOCK_VERIFY=true` and `X402_MOCK=true` (unless `FORCE_MOCK=1` is set), and `helmet`
+> adds `upgrade-insecure-requests`, which breaks access over plain HTTP — precisely what the
+> Wireshark capture needs. Likewise leave `COOKIE_SECURE=false`: the `Secure` flag is added
+> automatically once a request arrives over HTTPS (including from behind Caddy via
+> `X-Forwarded-Proto`).
 
-## Lokalni zagon — mock (brez sredstev)
+## Running locally — mock (no funds)
 
-En sam terminal:
+A single terminal:
 
 ```bash
-cd streznik
-npm run mock                            # NODE_ENV=development MOCK_VERIFY=true, vrata 8080
+cd server
+npm run mock                            # NODE_ENV=development MOCK_VERIFY=true, port 8080
 ```
 
-Nato v brskalniku odpri `http://localhost:8080`. Ker je celotno spletišče zaprto, te preusmeri
-na `/prijava`; geslo prebereš iz `data/admin-credentials.txt` (glej razdelek o prijavi spodaj).
+Then open `http://localhost:8080` in a browser. Because the whole website is locked down, you are
+redirected to `/login`; read the password from `data/admin-credentials.txt` (see the login section
+below).
 
-V načinu mock delujeta oba zavihka M2M takoj in brez sredstev, v zavihku 1 pa JavaScript doda
-gumb **Demo (mock, brez MetaMask)** — gumb obstaja samo, kadar `/config` vrne `mockVerify: true`.
+In mock mode both M2M tabs work immediately and without funds, and in tab 1 JavaScript adds a
+**Demo (mock, no MetaMask)** button — that button exists only when `/config` returns
+`mockVerify: true`.
 
-Vzporedni način x402 (prav tako brez sredstev):
+The parallel x402 mode (likewise without funds):
 
 ```bash
 X402_MODE=self X402_MOCK=true npm run mock
 ```
 
-Ukaza `npm start` (`node server.js`) in `npm run dev` (`NODE_ENV=development node server.js`)
-zaženeta isti strežnik, le da `MOCK_VERIFY` ne nastavita sama — vrednost vzameta iz `.env`.
-Ker je v `.env.example` privzeto `MOCK_VERIFY=true`, tudi `npm start` po `cp .env.example .env`
-teče v načinu mock; za pravi tek moraš v `.env` sam nastaviti `MOCK_VERIFY=false`.
+The `npm start` (`node server.js`) and `npm run dev` (`NODE_ENV=development node server.js`)
+commands start the same server, except that they do not set `MOCK_VERIFY` themselves — they take
+the value from `.env`. Since `.env.example` defaults to `MOCK_VERIFY=true`, `npm start` after
+`cp .env.example .env` also runs in mock mode; for a real run you have to set
+`MOCK_VERIFY=false` in `.env` yourself.
 
-## Lokalni zagon — realne meritve (Sepolia)
+## Running locally — real measurements (Sepolia)
 
-1. V `wallet.json` vpiši `address` (prejemnik) in `payerPrivateKey` financirane denarnice na
-   Ethereum Sepolia.
-2. V `.env` nastavi `MOCK_VERIFY=false` in po potrebi svoj `RPC_URL`. `NODE_ENV` pusti
+1. In `wallet.json` enter `address` (the recipient) and the `payerPrivateKey` of a funded wallet
+   on Ethereum Sepolia.
+2. In `.env` set `MOCK_VERIFY=false` and, if needed, your own `RPC_URL`. Leave `NODE_ENV` at
    `development`.
-3. Zaženi `npm start` in odpri `http://localhost:8080`.
-4. **Zavihek 1** plačaj z MetaMaskom (denarnica v brskalniku mora biti financirana na Sepoliji).
-   **Zavihka 2 in 3** poženeš z gumbom **Zaženi**; agent M2M plačuje iz `payerPrivateKey`.
+3. Run `npm start` and open `http://localhost:8080`.
+4. Pay **tab 1** with MetaMask (the browser wallet must be funded on Sepolia). **Tabs 2 and 3**
+   you start with the **Run** button; the M2M agent pays from `payerPrivateKey`.
 
-> **Poraba sredstev.** Zavihek 2 v pravem načinu izvede toliko pravih transakcij, kolikor
-> poizvedb nastaviš (privzeto 20), vsako s svojim gas. Trajanje je vezano na čas bloka Sepolije
-> (red velikosti deset sekund na transakcijo) — to je **ocena, ne meritev iz te mape**. Za hiter
-> prikaz zmanjšaj število poizvedb ali ostani v načinu mock.
+> **Spending funds.** In real mode tab 2 performs as many real transactions as the number of
+> queries you configure (20 by default), each with its own gas. The duration is tied to the
+> Sepolia block time (on the order of ten seconds per transaction) — that is an **estimate, not a
+> measurement from this folder**. For a quick demonstration reduce the number of queries or stay
+> in mock mode.
 
-> **Meja merjene seje.** Klasična kartica zavihka 3: privzeto je `TOPUP_WEI=2500000000000` in
-> `PRICE_WEI_PER_CALL=100000000000`, kar da **največ 25 bremenitev na sejo**. Vnosno polje sicer
-> dovoli do 200; pri več kot 25 se tek ustavi z `insufficient_balance` („Nezadostno
-> dobroimetje“) — `budget_exceeded` se pojavi le, če pri odprtju seje sam pošlješ nižji
-> `budgetWei` od pologa. V **pravem** načinu mejo dvigneš tako, da povečaš `TOPUP_WEI`; v načinu
-> **mock** `TOPUP_WEI` ne učinkuje — strežnik tam polog izračuna kot `PRICE_WEI_PER_CALL × 25`
-> (`server.js`, `/merjeno/session/open`), zato mock vedno dovoli natanko 25 bremenitev.
-> Kartica **x402** zavihka 3 ima svojo mejo: `X402_SESSION_DEPOSIT_ATOMIC=2000000000000` deljeno
-> z `X402_PRICE_ATOMIC=100000000000` da **20 bremenitev na sejo**.
+> **Metered session limit.** Classic card of tab 3: the defaults are `TOPUP_WEI=2500000000000` and
+> `PRICE_WEI_PER_CALL=100000000000`, which gives **at most 25 debits per session**. The input
+> field does allow up to 200; above 25 the run stops with `insufficient_balance` (“Insufficient
+> credit”) — `budget_exceeded` appears only if you send a `budgetWei` lower than the deposit
+> yourself when opening the session. In **real** mode you raise the limit by increasing
+> `TOPUP_WEI`; in **mock** mode `TOPUP_WEI` has no effect — there the server computes the deposit
+> as `PRICE_WEI_PER_CALL × 25` (`server.js`, `/metered/session/open`), so mock always allows
+> exactly 25 debits. The **x402** card of tab 3 has its own limit:
+> `X402_SESSION_DEPOSIT_ATOMIC=2000000000000` divided by `X402_PRICE_ATOMIC=100000000000` gives
+> **20 debits per session**.
 
-> **x402 v pravem načinu.** S privzeto testno nastavitvijo (domači ETH, ki pogodbe EIP-3009
-> nima) pravi (ne-mock) tek x402 ni mogoč: če je `X402_MODE=self` brez `X402_MOCK=true` in
-> naslov sredstva ostane ničelni, se strežnik ob zagonu ustavi z napako (`x402.js`). Poravnava
-> x402 je zato tu vedno sintetična (hash s predpono `0x6d6f636b6d6f636b`). Za pravi tok x402
-> uporabi mapo [`../06_x402/`](../06_x402/).
+> **x402 in real mode.** With the default test configuration (native ETH, which has no EIP-3009
+> contract) a real (non-mock) x402 run is not possible: if `X402_MODE=self` is set without
+> `X402_MOCK=true` and the asset address stays at zero, the server stops at startup with an error
+> (`x402.js`). x402 settlement here is therefore always synthetic (a hash with the
+> `0x6d6f636b6d6f636b` prefix). For a real x402 flow use the folder
+> [`../06_x402/`](../06_x402/).
 
-## Zagon na oddaljenem strežniku
+## Running on a remote server
 
-Strežnik teče na oddaljenem gostitelju, brskalnik pa lokalno na tvojem računalniku — ta mapa
-nima ločenega odjemalca, agent M2M teče v istem procesu in kliče `http://127.0.0.1:<PORT>`.
+The server runs on a remote host while the browser runs locally on your machine — this folder has
+no separate client, the M2M agent runs in the same process and calls `http://127.0.0.1:<PORT>`.
 
 ```bash
-ssh <UPORABNIK>@<IP_STREZNIKA>
-git clone <naslov-repozitorija> x402
-cd x402/testna-okolja/05_spletisce/streznik
+ssh <USER>@<SERVER_IP>
+git clone <repository-url> x402
+cd x402/test-environments/05_website_direct/server
 
 npm ci
-npm run build:klient                    # le ob spremembi src/; sveženj se vedno gradi na gostitelju
+npm run build:client                    # only after changing src/; the bundle is always built on the host
 cp .env.example .env
-nano .env                               # NODE_ENV=development (PUSTI!), COOKIE_SECURE=false
+nano .env                               # NODE_ENV=development (LEAVE IT!), COOKIE_SECURE=false
 cp wallet.example.json wallet.json
-nano wallet.json                        # address + po potrebi payerPrivateKey
+nano wallet.json                        # address + payerPrivateKey if needed
 
-sudo ufw allow 8080/tcp                 # aplikacija
-npm start                               # oz. npm run mock
+sudo ufw allow 8080/tcp                 # the application
+npm start                               # or npm run mock
 ```
 
-Nato odpri `http://<IP_STREZNIKA>:8080`.
+Then open `http://<SERVER_IP>:8080`.
 
-### Različica z Dockerjem in Caddyjem
+### The Docker and Caddy variant
 
-Priložena sta `Dockerfile` in `docker-compose.yml` (aplikacija + Caddy s TLS). Vrstni red je
-pomemben, ker slika teče pod neprivilegiranim uporabnikom in mora imeti pisljivo `data/`:
+A `Dockerfile` and a `docker-compose.yml` (application + Caddy with TLS) are included. The order
+matters, because the image runs as an unprivileged user and needs a writable `data/`:
 
 ```bash
 cp .env.example .env  &&  nano .env
 cp wallet.example.json wallet.json  &&  nano wallet.json
-npm ci && npm run build:klient           # sveženj mora obstajati PRED gradnjo slike
-                                         # (priložen je; gradi ga le ob spremembi src/)
+npm ci && npm run build:client           # the bundle must exist BEFORE the image build
+                                         # (it is committed; rebuild it only after changing src/)
 
 docker compose build
-UID_V=$(docker run --rm --entrypoint id x402-spletisce-neposredno:latest -u)
-GID_V=$(docker run --rm --entrypoint id x402-spletisce-neposredno:latest -g)
+UID_V=$(docker run --rm --entrypoint id x402-website-direct:latest -u)
+GID_V=$(docker run --rm --entrypoint id x402-website-direct:latest -g)
 mkdir -p data && sudo chown -R "$UID_V":"$GID_V" data
 
-nano Caddyfile                           # namesto tvoja-domena.si vpiši svojo domeno
-nano docker-compose.yml                  # za zajem odkomentiraj  ports: - "8080:8080"
+nano Caddyfile                           # replace your-domain.example with your own domain
+nano docker-compose.yml                  # for the capture, uncomment  ports: - "8080:8080"
 sudo ufw allow 80/tcp && sudo ufw allow 443/tcp
 docker compose up -d
-docker compose ps                        # obe storitvi "running"
+docker compose ps                        # both services "running"
 ```
 
-`Caddyfile` si sam pridobi certifikat Let's Encrypt (odprta morata biti vrata 80 in 443) in ima
-`flush_interval -1`, da živi prikaz (SSE) ni medpomnjen. Aplikacija je v `docker-compose.yml`
-privzeto samo `expose: 8080` in ni objavljena na gostitelja; objava vrat je zakomentirana in jo
-za zajem po HTTP odkomentiraš sam.
+The `Caddyfile` obtains a Let's Encrypt certificate on its own (ports 80 and 443 must be open) and
+sets `flush_interval -1` so the live view (SSE) is not buffered. In `docker-compose.yml` the
+application is `expose: 8080` only by default and is not published to the host; the port
+publication is commented out and you uncomment it yourself for an HTTP capture.
 
-Slika ima v `Dockerfile` `NODE_ENV=production`; vrednost iz `env_file: .env` jo prepiše, zato je
-`NODE_ENV=development` v `.env` obvezen, če hočeš način mock ali dostop po navadnem HTTP.
+The image sets `NODE_ENV=production` in the `Dockerfile`; the value from `env_file: .env`
+overrides it, so `NODE_ENV=development` in `.env` is mandatory if you want mock mode or access
+over plain HTTP.
 
-> **Opozorilo o izpostavljenosti.** Za slikovna dokazila poteka (402, `X-Payment`, `X-Signature`)
-> je potreben **navaden HTTP**, ker pod TLS Wireshark vsebine ne vidi. Dostop na vratih 8080 zato
-> omeji na LAN, loopback ali svoj naslov IP (`sudo ufw allow from <tvoj-IP> to any port 8080
-> proto tcp`) in ga po zajemu spet zapri. Zajem delaj po naslovu `http://<IP_STREZNIKA>:8080`,
-> **ne** po domeni: HSTS iz `Caddyfile` brskalniku leto dni prepove `http://` na tej domeni.
+> **Exposure warning.** Screenshot proof of the flow (402, `X-Payment`, `X-Signature`) requires
+> **plain HTTP**, because Wireshark cannot see the content under TLS. So restrict access on port
+> 8080 to the LAN, loopback or your own IP address (`sudo ufw allow from <YOUR_IP> to any port
+> 8080 proto tcp`) and close it again after the capture. Do the capture at
+> `http://<SERVER_IP>:8080`, **not** at the domain: the HSTS from the `Caddyfile` forbids the
+> browser from using `http://` on that domain for a year.
 
-> **⚠ Poraba denarnice.** Gumba *Zaženi* v zavihkih 2 in 3 sprožita vgrajenega agenta prek poti
-> `/run/tx` in `/run/merjeno`. V **pravem** načinu (`MOCK_VERIFY=false` + `payerPrivateKey`) to
-> porablja pravo denarnico. Skrbniška prijava te poti zapira, zato jih anonimen obiskovalec ne
-> more sprožiti — **geslo hrani skrbno** in za javno dostopno demonstracijo pusti
-> `MOCK_VERIFY=true`.
+> **⚠ Wallet spending.** The *Run* buttons in tabs 2 and 3 trigger the built-in agent through the
+> `/run/tx` and `/run/metered` paths. In **real** mode (`MOCK_VERIFY=false` + `payerPrivateKey`)
+> this spends a real wallet. The admin login locks these paths down, so an anonymous visitor
+> cannot trigger them — **keep the password safe** and leave `MOCK_VERIFY=true` for a publicly
+> reachable demonstration.
 
-## Skrbniška prijava (celotno spletišče je zaprto)
+## Admin login (the whole website is locked down)
 
-Javne ostanejo samo poti `GET /health`, `GET|POST /prijava` in `POST /odjava` — vse ostalo
-zahteva prijavo. Poverilnice si strežnik **ob prvem zagonu ustvari sam** in jih ob **vsakem**
-zagonu osveži v datoteko s pravicami 0600:
+Only the `GET /health`, `GET|POST /login` and `POST /logout` paths stay public — everything else
+requires a login. The server **creates the credentials itself on first start** and refreshes them
+into a file with 0600 permissions on **every** start:
 
 ```bash
-grep GESLO data/admin-credentials.txt      # za prijavo v brskalniku
-grep ZETON data/admin-credentials.txt      # strojni žeton (Authorization: Bearer)
+grep GESLO data/admin-credentials.txt      # for logging in via the browser
+grep TOKEN data/admin-credentials.txt      # machine token (Authorization: Bearer)
 ```
 
-Odpri spletišče → preusmeri te na `/prijava` → vpiši uporabnika in geslo. Gumb **Odjava** je
-zgoraj. Vgrajeni agent M2M žeton dobi sam, zato zavihka 2 in 3 delujeta brez dodatnih nastavitev.
-Če v `.env` nastaviš `ADMIN_USER`, `ADMIN_PASSWORD` in `ADMIN_TOKEN`, se `admin.json` ne zapiše,
-geslo pa nikoli ne pride na disk v odprti obliki (v `admin-credentials.txt` je namesto njega
-opomba `(iz okoljske spremenljivke ADMIN_PASSWORD)`). Datoteka `admin-credentials.txt` se
-kljub temu prepiše ob vsakem zagonu in vsebuje `UPORABNIK=` in `ZETON=`.
+Open the website → you are redirected to `/login` → enter the username and password. The
+**Logout** button is at the top. The built-in M2M agent obtains the token itself, so tabs 2 and 3
+work with no extra configuration. If you set `ADMIN_USER`, `ADMIN_PASSWORD` and `ADMIN_TOKEN` in
+`.env`, `admin.json` is not written and the password never reaches the disk in the clear (in
+`admin-credentials.txt` there is a note `(from the ADMIN_PASSWORD environment variable)` in its
+place). Even so, `admin-credentials.txt` is rewritten on every start and contains `USERNAME=` and
+`TOKEN=`.
 
-Zaganjalniki `/run/*` porabljajo denarnico, zato poleg prijave zahtevajo še žeton CSRF trenutne
-seje (`GET /run/zeton`), ki ga stran doda v naslov `EventSource`, in zavrnejo zahteve, ki so
-videti kot krmarjenje (`Sec-Fetch-Mode: navigate`) ali prihajajo z druge strani (`Sec-Fetch-Site`
-ni `same-origin`). To prepreči, da bi tuja stran prijavljenemu skrbniku sprožila plačila (CSRF).
-Strojni dostop z glavo `Authorization: Bearer <ZETON>` je CSRF izvzet.
+Because the `/run/*` launchers spend a wallet, on top of the login they also require the CSRF
+token of the current session (`GET /run/token`), which the page appends to the `EventSource` URL,
+and they reject requests that look like navigation (`Sec-Fetch-Mode: navigate`) or come from
+another site (`Sec-Fetch-Site` other than `same-origin`). This prevents a foreign page from
+triggering payments on behalf of a logged-in admin (CSRF). Machine access with the
+`Authorization: Bearer <TOKEN>` header is exempt from CSRF.
 
-Podrobnosti: [skrbniška prijava](../README.md#skrbniška-prijava).
+Details: [admin login](../README.md#admin-login).
 
-## Poti strežnika
+## Server routes
 
-| dostop | poti |
+| access | paths |
 |---|---|
-| javno | `GET /health`, `GET\|POST /prijava`, `POST /odjava` |
-| za prijavljenega | `/`, `/config`, `/seja`, `/enkratno/config`, `/enkratno/service` (GET, POST), `/enkratno/verify`, `/tx/reading`, `/tx/verify`, `/merjeno/session/open`, `/merjeno/session/:id`, `/merjeno/reading-metered` |
-| za prijavljenega (vir žetona CSRF) | `GET /run/zeton` |
-| zaganjalniki (prijava + žeton CSRF) | `/run/tx`, `/run/merjeno`, `/run/x402-tx`, `/run/x402-merjeno` |
-| samo pri `X402_MODE=self` | `/x402/config`, `/x402/enkratno/service`, `/x402/tx/reading`, `/x402/merjeno/session/open`, `/x402/merjeno/session/:id`, `/x402/merjeno/reading-metered`, `/x402/payment/:id` |
+| public | `GET /health`, `GET\|POST /login`, `POST /logout` |
+| logged in | `/`, `/config`, `/session`, `/single/config`, `/single/service` (GET, POST), `/single/verify`, `/tx/reading`, `/tx/verify`, `/metered/session/open`, `/metered/session/:id`, `/metered/reading-metered` |
+| logged in (CSRF token source) | `GET /run/token` |
+| launchers (login + CSRF token) | `/run/tx`, `/run/metered`, `/run/x402-tx`, `/run/x402-metered` |
+| only with `X402_MODE=self` | `/x402/config`, `/x402/single/service`, `/x402/tx/reading`, `/x402/metered/session/open`, `/x402/metered/session/:id`, `/x402/metered/reading-metered`, `/x402/payment/:id` |
 
-## Seja in identiteta (odpornost na menjavo IP)
+## Session and identity (resilience to IP changes)
 
-Strežnik ob prvem obisku shrani kratkoživ žeton `sid` v piškotek
-(`HttpOnly; SameSite=Lax`, privzeto 30 min) in ga kasneje bere **samo za povezovanje**
-dogodkov iste seje: plačilna zahteva (402) → dokazni žeton → dostop → merjena seja.
+On the first visit the server stores a short-lived `sid` token in a cookie
+(`HttpOnly; SameSite=Lax`, 30 min by default) and later reads it **only to correlate** the events
+of one session: payment request (402) → proof token → access → metered session.
 
-**`sid` ni avtorizacija.** Manjkajoč, neveljaven ali spremenjen piškotek nikoli ne povzroči
-zavrnitve — dostop odloča denarnica (podpis oz. pošiljatelj transakcije) in enkratni žeton.
-Ker žeton potuje z brskalnikom in ne z omrežjem, potek **preživi menjavo IP** (wifi ↔ mobilni
-internet, NAT). Razdelek **„Seja in identiteta“** na dnu strani to pokaže v živo; `GET /seja`
-vrne isti pogled v JSON (le okrajšan `sid`, brez naslovov IP).
+**`sid` is not authorisation.** A missing, invalid or altered cookie never causes a rejection —
+access is decided by the wallet (the signature, or the sender of the transaction) and the one-time
+token. Because the token travels with the browser and not with the network, the flow **survives an
+IP change** (wifi ↔ mobile internet, NAT). The **“Session and identity”** section at the bottom of
+the page shows this live; `GET /session` returns the same view as JSON (only with a truncated
+`sid`, and no IP addresses).
 
-Nastavitvi: `WEB_SESSION_TTL_SECONDS` (privzeto 1800) in `COOKIE_SECURE` (pusti na `false` —
-`Secure` se doda samodejno pod HTTPS, tudi izza Caddyja; vsiljen `true` onemogoči prijavo po
-navadnem HTTP, torej ravno pri zajemu za Wireshark).
+Two settings: `WEB_SESSION_TTL_SECONDS` (1800 by default) and `COOKIE_SECURE` (leave it at `false`
+— `Secure` is added automatically under HTTPS, including from behind Caddy; forcing it to `true`
+makes login over plain HTTP impossible, which is exactly the Wireshark capture case).
 
-Načelo in postopek preizkusa: [`../docs/IDENTITETA.md`](../docs/IDENTITETA.md).
+The principle and the test procedure: [`../docs/IDENTITY.md`](../docs/IDENTITY.md).
 
 ## Wireshark
 
-Spletišče privzeto teče po **navadnem HTTP**, zato Wireshark vidi statusni odgovor 402, glave
-`X-Payment`, `X-Signature` in časovne glave `X-Server-Ms`. Filtri so v
-[zajem z Wiresharkom](../README.md#zajem-z-wiresharkom). Pod TLS (Caddy) Wireshark vsebine ne vidi, zato za dokazila
-uporabi dostop po HTTP na vratih 8080.
+The website runs over **plain HTTP** by default, so Wireshark sees the 402 status response, the
+`X-Payment` and `X-Signature` headers and the `X-Server-Ms` timing header. The filters are in
+[Wireshark capture](../README.md#wireshark-capture). Under TLS (Caddy) Wireshark cannot see the
+content, so use HTTP access on port 8080 for proof.
 
-## Analiza rezultatov
+## Analysing the results
 
-Ta mapa **nima analize** — ni skripte Python, ni `requirements.txt` in ne nastane nobena slika.
-Rezultati zavihkov obstajajo samo kot dogodki SSE v brskalniku. Za grafe in tabele
-uporabi analize v mapah [`../01_enkratna_placila/`](../01_enkratna_placila/),
-[`../02_avtomatska_placila_transakcije/`](../02_avtomatska_placila_transakcije/) in
-[`../03_avtomatska_placila_dobroimetje/`](../03_avtomatska_placila_dobroimetje/), za primerjavo
-topologij pa [`../04_spletisce_posrednik/`](../04_spletisce_posrednik/).
+This folder **has no analysis** — there is no Python script, no `requirements.txt`, and no figure
+is produced. The results of the tabs exist only as SSE events in the browser. For charts and
+tables use the analyses in [`../01_one_time_payments/`](../01_one_time_payments/),
+[`../02_machine_payments_per_request/`](../02_machine_payments_per_request/) and
+[`../03_machine_payments_prepaid/`](../03_machine_payments_prepaid/), and for the topology
+comparison [`../04_website_facilitator/`](../04_website_facilitator/).
 
-## Pričakovani izhodi
+## Expected outputs
 
-**Ne nastane noben CSV, povzetek JSON ali PNG.** Ob zagonu se v `streznik/data/` ustvarijo samo:
+**No CSV, JSON summary or PNG is produced.** On startup only the following are created in
+`server/data/`:
 
-| datoteka | kdaj |
+| file | when |
 |---|---|
-| `spletisce_neposredno.db` (+ `-wal`, `-shm`) | vedno; pot lahko spremeniš z `DB_PATH` |
-| `x402_placila.db` (+ `-wal`, `-shm`) | samo pri `X402_MODE=self`; pot lahko spremeniš z `X402_DB_PATH` |
-| `admin.json` (0600) | uporabnik, sol, izvleček gesla in žeton |
-| `admin-credentials.txt` (0600) | prepiše se ob **vsakem** zagonu; vsebuje `UPORABNIK=`, `GESLO=`, `ZETON=` |
+| `website_direct.db` (+ `-wal`, `-shm`) | always; the path can be changed with `DB_PATH` |
+| `x402_payments.db` (+ `-wal`, `-shm`) | only with `X402_MODE=self`; the path can be changed with `X402_DB_PATH` |
+| `admin.json` (0600) | username, salt, password digest and token |
+| `admin-credentials.txt` (0600) | rewritten on **every** start; contains `USERNAME=`, `PASSWORD=`, `TOKEN=` |
 
-Vse to izloči korenski `.gitignore`.
+The root `.gitignore` excludes all of this.
 
-**Signali uspeha:**
+**Signs of success:**
 
-- v izpisu strežnika `Wallet loaded` z naslovom prejemnika in nato poslušanje na vratih 8080;
-- `curl -fsS http://localhost:8080/health` vrne odgovor 200 (brez prijave);
-- v brskalniku se po prijavi prikaže stran s tremi zavihki;
-- zavihek 2 v živo izpiše po eno vrstico na poizvedbo in konča z dogodkom `konec`;
-- zavihek 3, klasična kartica: vrstica `Seja odprta (1 on-chain transakcija)` in nato po ena
-  vrstica na bremenitev z upadajočim `dobroimetje=… wei`;
-- zavihek 3, kartica x402 (samo pri `X402_MODE=self`): vrstica `⛓ ON-CHAIN POLNITEV` in nato
-  N vrstic `✎ OFF-CHAIN bremenitev …` z upadajočim ostankom (dnevnik izpisuje najnovejše zgoraj).
+- `Wallet loaded` with the recipient address in the server log, followed by listening on port 8080;
+- `curl -fsS http://localhost:8080/health` returns a 200 response (without a login);
+- after logging in, the browser shows the page with three tabs;
+- tab 2 prints one line per query live and finishes with an `end` event;
+- tab 3, classic card: the line `Seja odprta (1 on-chain transakcija)` and then one line per debit
+  with a decreasing `credit=… wei`;
+- tab 3, x402 card (only with `X402_MODE=self`): the line `⛓ ON-CHAIN TOP-UP` and then N
+  `✎ OFF-CHAIN debit …` lines with a decreasing remainder (the log prints the newest entries at
+  the top).
 
-## x402 v2 (vzporedni način — samofacilitirano)
+## x402 v2 (parallel mode — self-facilitated)
 
-Vsi trije zavihki imajo poleg klasične še kartico x402 (ETH, Ethereum Sepolia — testno; poravnava
-je sintetična/mock). Strežnik preverja in poravnava **sam** — v tej mapi ni nobenega klica
-facilitatorju. Podpisi se preverijo zares (off-chain), poravnavo pa v načinu `X402_MOCK=true`
-opravi vgrajeni zamašek in `X402_RPC_URL` se ne kliče; v pravem načinu bi šla poravnava prek
-`X402_RPC_URL` (glej opombo o pravem načinu zgoraj):
+Alongside the classic one, all three tabs also have an x402 card (ETH, Ethereum Sepolia — test;
+settlement is synthetic/mock). The server verifies and settles **itself** — there is no call to a
+facilitator anywhere in this folder. The signatures really are verified (off-chain), while in
+`X402_MOCK=true` mode the settlement is done by a built-in stub and `X402_RPC_URL` is never
+called; in real mode settlement would go through `X402_RPC_URL` (see the note on real mode above):
 
-- zavihek 1: kartica „x402 v2“ — MetaMask podpiše pooblastilo EIP-3009;
-- zavihka 2 in 3: gumba **Zaženi (x402)** (SSE prek `/run/x402-tx` in `/run/x402-merjeno`);
-  merjeni dogodki ločijo ON-CHAIN POLNITEV od OFF-CHAIN BREMENITEV z oznako `veriga`.
+- tab 1: the “x402 v2” card — MetaMask signs an EIP-3009 authorisation;
+- tabs 2 and 3: the **Run (x402)** buttons (SSE over `/run/x402-tx` and `/run/x402-metered`); the
+  metered events tell an ON-CHAIN TOP-UP apart from OFF-CHAIN DEBITS through the `chain` flag.
 
-Zagon: `X402_MODE=self X402_MOCK=true npm run mock`. Sveženj za brskalnik zgradiš z
-`npm run build:klient`.
+Startup: `X402_MODE=self X402_MOCK=true npm run mock`. You build the browser bundle with
+`npm run build:client`.
 
-Dve trdi varovalki v kodi (`server.js`, znotraj `if (x402.enabled)`): če je x402 vklopljen z
-drugačno vrednostjo kot `X402_MODE=self` ali če je ob tem nastavljen `X402_FACILITATOR_URL`, se
-proces ob zagonu namerno konča — mapa 05 je po definiciji brez posrednika. Pri privzetem
-`X402_MODE=off` se ne sproži nobena od njiju. Podrobnosti protokola: [uradni protokol x402 v2](../README.md#uradni-protokol-x402-v2).
+Two hard guards in the code (`server.js`, inside `if (x402.enabled)`): if x402 is enabled with a
+value other than `X402_MODE=self`, or if `X402_FACILITATOR_URL` is set at the same time, the
+process deliberately terminates at startup — folder 05 is facilitator-free by definition. With the
+default `X402_MODE=off` neither guard fires. Protocol details:
+[official x402 v2 protocol](../README.md#official-x402-v2-protocol).
 
-## Odpravljanje težav
+## Troubleshooting
 
-| simptom | vzrok in rešitev |
+| symptom | cause and fix |
 |---|---|
-| stran se naloži, kartice x402 pa ne delujejo | manjka `public/x402-klient.js` → `npm ci && npm run build:klient` |
-| stran se ne odziva (zavihki se ne preklapljajo), konzola javi napako uvoza | ni dostopa do `https://esm.sh` (CDN za `viem`); brez njega odpove celoten `app.js`, torej vse klasične kartice in razdelek o seji |
-| gumba **Demo (mock, brez MetaMask)** ni | strežnik ne teče v načinu mock — `/config` mora vrniti `mockVerify: true` |
-| `MOCK_VERIFY=true` nima učinka | `NODE_ENV=production` mock razveljavi; nastavi `NODE_ENV=development` |
-| brskalnik vztraja pri `https://` na vratih 8080 | `NODE_ENV=production` doda `upgrade-insecure-requests`; nastavi `development` |
-| prijava se vrti v krogu po navadnem HTTP | `COOKIE_SECURE=true` — nastavi na `false` |
-| zavihek 3 se ustavi z `insufficient_balance` | presežen polog seje (klasična kartica 25, x402 kartica 20 bremenitev); zmanjšaj število bremenitev ali — v pravem načinu — povečaj `TOPUP_WEI` |
-| proces se ob zagonu takoj konča | x402 je vklopljen (`X402_MODE` ni `off`) z drugo vrednostjo kot `self`, ali pa je ob vklopljenem x402 nastavljen `X402_FACILITATOR_URL`; z `X402_MODE=off` (privzeto) obe varovalki mirujeta |
-| v Dockerju ni `data/admin-credentials.txt` | mapa `data/` ni pisljiva za uporabnika v sliki — popravi lastništvo (glej zgoraj) |
+| the page loads but the x402 cards do not work | `public/x402-browser.js` is missing → `npm ci && npm run build:client` |
+| the page is unresponsive (tabs do not switch), the console reports an import error | no access to `https://esm.sh` (the CDN for `viem`); without it the whole of `app.js` fails, i.e. all classic cards and the session section |
+| there is no **Demo (mock, no MetaMask)** button | the server is not running in mock mode — `/config` has to return `mockVerify: true` |
+| `MOCK_VERIFY=true` has no effect | `NODE_ENV=production` cancels mock; set `NODE_ENV=development` |
+| the browser insists on `https://` on port 8080 | `NODE_ENV=production` adds `upgrade-insecure-requests`; set `development` |
+| the login goes round in circles over plain HTTP | `COOKIE_SECURE=true` — set it to `false` |
+| tab 3 stops with `insufficient_balance` | the session deposit is exceeded (classic card 25, x402 card 20 debits); reduce the number of debits or — in real mode — increase `TOPUP_WEI` |
+| the process terminates immediately at startup | x402 is enabled (`X402_MODE` is not `off`) with a value other than `self`, or `X402_FACILITATOR_URL` is set while x402 is enabled; with `X402_MODE=off` (the default) both guards stay dormant |
+| there is no `data/admin-credentials.txt` in Docker | the `data/` folder is not writable by the user in the image — fix the ownership (see above) |
 
-Splošna navodila in ukazi po korakih: [`testna-okolja/README.md`](../README.md) ·
-prijava in poverilnice: [skrbniška prijava](../README.md#skrbniška-prijava).
+General instructions and step-by-step commands: [`test-environments/README.md`](../README.md) ·
+login and credentials: [admin login](../README.md#admin-login).

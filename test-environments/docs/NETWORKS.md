@@ -1,141 +1,143 @@
-# Katera omrežja bi ta sistem lahko uporabljal?
+# Which networks could this system use?
 
-> Vprašanje: *„ali bi to lahko uporabili za obstoječa omrežja — Sepolia, Bitcoin, pravi
-> Ethereum ali katero koli drugo?"*
+> The question: *"could this be used on existing networks — Sepolia, Bitcoin, real Ethereum or
+> anything else?"*
 >
-> Kratek odgovor: **Sepolia deluje danes. Druge verige EVM so nastavitev in približno
-> štiri datoteke. Pravi Ethereum tehnično deluje, ekonomsko pa ne. Bitcoin ni nastavitev,
-> ampak predelava plasti preverjanja (~40 % kode). USDC/EURC je nova zmožnost, a je
-> posredniška veja (mapa 04) zanjo najkrajša pot.**
+> The short answer: **Sepolia works today. Other EVM chains are a matter of configuration plus
+> roughly four files. Real Ethereum works technically, but not economically. Bitcoin is not a
+> configuration change but a rebuild of the verification layer (~40 % of the code). USDC/EURC is a
+> new capability, and the facilitator branch (folder 04) is the shortest path to it.**
 
-Ta dokument je **analiza, ne načrt dela** — razen kjer je izrecno navedeno drugače, nobena
-od spodnjih sprememb ni izvedena. Namen je natančno razmejiti, kateri deli sistema so
-prenosljivi na druga omrežja in kateri ne.
+This document is an **analysis, not a work plan** — except where stated otherwise, none of the
+changes below have been implemented. The point is to draw a precise line between the parts of the
+system that are portable to other networks and the parts that are not.
 
-## Povzetek
+## Summary
 
-| Omrežje / sredstvo | Deluje? | Kaj bi bilo treba | Zakaj |
+| Network / asset | Works? | What it would take | Why |
 |---|---|---|---|
-| **Ethereum Sepolia** | ✅ danes | nič | privzeta nastavitev |
-| **Druge verige EVM** (Base, Polygon, Arbitrum, Optimism) | 🟡 majhen poseg | nastavitev + ~4 datoteke | drug `chainId`, drug objekt verige v brskalniku |
-| **Ethereum mainnet** | 🟡 tehnično da, ekonomsko ne | isto kot zgoraj | 21 000 enot gasa preseže mikroplačilo za velikostne rede |
-| **Bitcoin (osnovna plast)** | ❌ ne brez predelave | nova plast preverjanja | UTXO namesto računov, brez potrdil, brez gasa, drug format podpisa |
-| **Lightning / L402** | 🟡 drug sistem, isti vzorec | ločena izvedba | to je bitcoinov lastni ustreznik x402 |
-| **USDC / EURC (ERC-20)** | 🟡 nova zmožnost | posrednik + trgovec | drugačno branje transakcije; 6 decimalk, ne 18 |
+| **Ethereum Sepolia** | ✅ today | nothing | the default configuration |
+| **Other EVM chains** (Base, Polygon, Arbitrum, Optimism) | 🟡 a small change | configuration + ~4 files | a different `chainId`, a different chain object in the browser |
+| **Ethereum mainnet** | 🟡 technically yes, economically no | the same as above | 21 000 units of gas exceeds the micropayment by orders of magnitude |
+| **Bitcoin (base layer)** | ❌ not without a rebuild | a new verification layer | UTXOs instead of accounts, no receipts, no gas, a different signature format |
+| **Lightning / L402** | 🟡 a different system, the same pattern | a separate implementation | this is Bitcoin's own equivalent of x402 |
+| **USDC / EURC (ERC-20)** | 🟡 a new capability | facilitator + merchant | a different way of reading the transaction; 6 decimals, not 18 |
 
 ---
 
-## 1. Ethereum Sepolia — deluje danes
+## 1. Ethereum Sepolia — works today
 
-`NETWORK=sepolia`, `chainId 0xaa36a7`, bloki ~12 s. To je privzeta in preizkušena
-nastavitev vseh map.
+`NETWORK=sepolia`, `chainId 0xaa36a7`, blocks roughly every 12 s. This is the default, tested
+configuration of every folder.
 
-## 2. Druge verige EVM — nastavitev in približno štiri datoteke
+## 2. Other EVM chains — configuration plus roughly four files
 
-Preverjanje plačila je popolnoma prenosljivo: `getTransaction` + `getTransactionReceipt`
-in primerjava `to` / `value` / `from` delujejo enako na vsaki verigi EVM. Prav tako so
-nespremenjeni podpisi EIP-191, shema SQLite in **celoten merjeni način**.
+Payment verification is completely portable: `getTransaction` + `getTransactionReceipt` and the
+comparison of `to` / `value` / `from` work the same way on every EVM chain. The EIP-191 signatures,
+the SQLite schema and **the entire metered mode** are likewise unchanged.
 
-Spremeniti je treba tole:
+What would have to change is this:
 
-| Mesto | Kaj | Opomba |
+| Place | What | Note |
 |---|---|---|
-| `.env` | `NETWORK`, `RPC_URL` | pravilnik CSP `RPC_URL` doda sam (`RPC_ORIGIN`) — dovoljenj ni treba urejati |
-| `streznik/server.js` (`/config`) | ternarni izraz `NETWORK === 'sepolia' ? '0xaa36a7' : null` | za drugo verigo vrne `null` in brskalnik ne ve, na kaj naj preklopi |
-| `streznik/server.js` (`/enkratno/config`) | v mapah 04/05 je bil `'0xaa36a7'` zapisan **brezpogojno** | v tej izdaji že popravljeno na isti ternarni izraz; pot je sicer mrtva (stran je ne kliče), a je bila skrita past |
-| `streznik/public/app.js` | uvoz `sepolia` iz `viem/chains`, primerjava z dobesednim `'0xaa36a7'` namesto s `CFG.chainId` | poleg tega ni rezerve `wallet_addEthereumChain` — mapa 01 jo ima (`public/app.js:33-41`) in jo je vredno prekopirati |
+| `.env` | `NETWORK`, `RPC_URL` | the CSP policy adds `RPC_URL` by itself (`RPC_ORIGIN`) — no permissions need editing |
+| `server/server.js` (`/config`) | the ternary `NETWORK === 'sepolia' ? '0xaa36a7' : null` | for any other chain it returns `null` and the browser has no idea what to switch to |
+| `server/server.js` (`/single/config`) | in folders 04/05 `'0xaa36a7'` was hard-coded **unconditionally** | already fixed to the same ternary in this release; the route is dead anyway (the page never calls it), but it was a hidden trap |
+| `server/public/app.js` | the `sepolia` import from `viem/chains`, and the comparison against the literal `'0xaa36a7'` instead of `CFG.chainId` | on top of that there is no `wallet_addEthereumChain` fallback — folder 01 has one (`public/app.js:33-41`) and it is worth copying across |
 
-**Ločena, prava napaka (velja za vsa omrežja).** `streznik/runner.js` ima trdo zapisano
-`tx.wait(1)` namesto `MIN_CONFIRMATIONS`. Če nastaviš `MIN_CONFIRMATIONS=3`, vgrajeni
-agent počaka le eno potrditev, preverjanje pa jih zahteva tri — in vsako preverjanje
-odpove. Na verigah s hitrejšimi bloki (Base ~2 s) je večja globina potrditev prav
-priporočljiva, zato bi ta hrošč tam udaril takoj.
+**A separate, genuine bug (it applies to every network).** `server/runner.js` hard-codes
+`tx.wait(1)` instead of `MIN_CONFIRMATIONS`. If you set `MIN_CONFIRMATIONS=3`, the built-in agent
+waits for only one confirmation while verification demands three — and every verification fails. On
+chains with faster blocks (Base ~2 s) a greater confirmation depth is actually advisable, so this
+bug would bite immediately there.
 
-## 3. Ethereum mainnet — tehnično isto, ekonomsko brez smisla
+## 3. Ethereum mainnet — technically identical, economically pointless
 
-Strukturno se ne spremeni nič: mainnet je veriga EVM kot vsaka druga. Se pa sesuje
-ekonomija. Prenos ETH stane 21 000 enot gasa; pri realnih cenah mainneta je to
-**velikostne rede več od samega mikroplačila** (~1 cent). Plačilo za odčitek senzorja bi
-imelo provizijo, večjo od odčitka.
+Structurally nothing changes: mainnet is an EVM chain like any other. What collapses is the
+economics. An ETH transfer costs 21 000 units of gas; at real mainnet prices that is **orders of
+magnitude more than the micropayment itself** (~1 cent). A payment for a sensor reading would carry
+a fee larger than the reading.
 
-Ta ocena je **navedena, ne izmerjena** — meritev na mainnetu v tem repozitoriju ni.
-Vredno je poudariti: prav to je razlog za merjeni način. Model
-„ena polnitev + N podpisanih bremenitev" strošek gasa deli z N, zato je edini od treh
-tokov, ki bi bil na mainnetu sploh smiseln — in tudi tam šele pri dovolj velikem N.
+This estimate is **quoted, not measured** — there are no mainnet measurements in this repository.
+It is worth stressing: this is exactly the reason for metered mode. The "one top-up + N signed
+debits" model divides the gas cost by N, which makes it the only one of the three flows that would
+make any sense at all on mainnet — and even there only once N is large enough.
 
-## 4. Bitcoin — ni nastavitev, ampak nova plast preverjanja
+## 4. Bitcoin — not a configuration change but a new verification layer
 
-Tu se predpostavke razidejo. Bitcoin nima računov, ampak **UTXO**:
+This is where the assumptions part ways. Bitcoin has no accounts; it has **UTXOs**:
 
-| Predpostavka v kodi | Na Bitcoinu |
+| Assumption in the code | On Bitcoin |
 |---|---|
-| `tx.from` — pošiljatelj | **ne obstaja**; vhodi so reference na prejšnje izhode |
-| en `tx.to` in en `tx.value` | transakcija ima **več izhodov**; „prejemnik" je eden od njih |
-| `receipt.status === 1` | **ni potrdil**; transakcija je bodisi v bloku bodisi ne |
-| `gasUsed`, `gasPrice` | **ni gasa**; provizija je razlika med vhodi in izhodi |
-| `ethers.getAddress` + `.toLowerCase()` | naslovi bech32 in base58 — **`toLowerCase()` na base58 naslov pokvari**, ker je tam velikost črk pomenska |
-| `ethers.verifyMessage` (EIP-191) | ustreznik je **BIP-322** (oz. starejši „signmessage") |
-| wei, 18 decimalk | satoshi, 8 decimalk |
+| `tx.from` — the sender | **does not exist**; inputs are references to earlier outputs |
+| one `tx.to` and one `tx.value` | a transaction has **several outputs**; the "recipient" is one of them |
+| `receipt.status === 1` | **there are no receipts**; a transaction is either in a block or it is not |
+| `gasUsed`, `gasPrice` | **there is no gas**; the fee is the difference between the inputs and the outputs |
+| `ethers.getAddress` + `.toLowerCase()` | bech32 and base58 addresses — **`toLowerCase()` corrupts a base58 address**, because letter case is meaningful there |
+| `ethers.verifyMessage` (EIP-191) | the equivalent is **BIP-322** (or the older "signmessage") |
+| wei, 18 decimals | satoshi, 8 decimals |
 
-Poleg tega **desetminutni bloki ubijejo tok „plačilo na odčitek"**: 20 odčitkov s po eno
-potrditvijo je ~3 ure in več. Praktično bi počilo prej — `runner.js` ima `tx.wait(1)`,
-odjemalci pa 90-sekundno časovno omejitev axios.
+On top of that, **ten-minute blocks kill the "payment per reading" flow**: 20 readings with one
+confirmation each is ~3 hours or more. In practice it would break sooner — `runner.js` uses
+`tx.wait(1)`, and the clients have a 90-second axios timeout.
 
-**Kaj bi preživelo:** oblika protokola 402, `db.js`, `auth.js`, SSE, skrbniška prijava in —
-kar je najpomembnejše — **celotna zasnova „1 polnitev + N podpisanih bremenitev"**. Merjeni
-način je namreč **že zdaj neodvisen od verige pod ravnjo polnitve**: verige se dotakne
-izključno `/merjeno/session/open`. Vse ostalo so podpisi in knjigovodstvo.
+**What would survive:** the shape of the 402 protocol, `db.js`, `auth.js`, SSE, the admin login and
+— most importantly — **the whole "1 top-up + N signed debits" design**. Metered mode is in fact
+**already chain-independent below the top-up level**: the only thing that touches the chain is
+`/metered/session/open`. Everything else is signatures and bookkeeping.
 
-Bitcoinov domači ustreznik je **Lightning / L402** (prej LSAT): tudi ta uporablja HTTP 402
-in žeton, ki ga odjemalec predloži. L402 je najbližji soroden pristop temu sistemu.
-Za Bitcoin je to prava pot — ne prilagajanje te kode osnovni plasti.
+Bitcoin's native equivalent is **Lightning / L402** (formerly LSAT): it too uses HTTP 402 and a
+token that the client presents. L402 is the approach most closely related to this system. For
+Bitcoin that is the right path — not adapting this code to the base layer.
 
-## 5. USDC / EURC — nova zmožnost, in posredniška veja je najkrajša pot
+## 5. USDC / EURC — a new capability, and the facilitator branch is the shortest path
 
-Danes v `testna-okolja/` **ni podpore za ERC-20**: vsi trije tokovi merijo `tx.value`, kar je
-domači ETH. Za žetone bi bilo treba:
+Today there is **no ERC-20 support** in `test-environments/`: all three flows measure `tx.value`,
+which is native ETH. For tokens you would need to:
 
-- brati **dogodek `Transfer`** iz potrdila namesto `tx.value`;
-- upoštevati, da je `tx.to` pri žetonskem prenosu **naslov pogodbe žetona**, ne prejemnika —
-  zato se preverjanje prejemnika (`streznik/server.js`, primerjava z `RECEIVER`) obrne;
-- **6 decimalk namesto 18** (USDC in EURC), torej vse pretvorbe `parseEther`/`formatEther`;
-- odobritev / stanje žetona na strani plačnika.
+- read the **`Transfer` event** from the receipt instead of `tx.value`;
+- account for the fact that on a token transfer `tx.to` is **the token contract's address**, not the
+  recipient's — which inverts the recipient check (`server/server.js`, the comparison against
+  `RECEIVER`);
+- use **6 decimals instead of 18** (USDC and EURC), i.e. every `parseEther`/`formatEther`
+  conversion;
+- handle the token approval / balance on the payer's side.
 
-**Zakaj je za to najprimernejša mapa 04 (posrednik):** stara izvedba posrednika
-`Transfer` **že zna razbrati** (koda je v `experiments/legacy/.../facilitator.js`, čeprav
-neuporabljena), predvsem pa je v topologiji (b) branje verige na **enem samem mestu**.
-Prehod na žetone je torej sprememba **posrednika**, trgovec pa ostane nedotaknjen — kar
-je mimogrede lep argument za samo topologijo (b).
+**Why folder 04 (the facilitator) is the best fit for this:** the old facilitator implementation
+**already knows how to decode** `Transfer` (the code is in `experiments/legacy/.../facilitator.js`,
+although unused), and above all, in topology (b) the chain is read in **a single place**. Moving to
+tokens is therefore a change to **the facilitator**, and the merchant is left untouched — which is
+incidentally a neat argument for topology (b) in itself.
 
-Dvoje je vredno izpostaviti:
+Two points are worth highlighting:
 
-1. **EIP-3009** (`transferWithAuthorization`) je tisto, kar dela *uradni* x402: plačnik
-   podpiše pooblastilo, gas plača posrednik, plačnik ne potrebuje domačega žetona verige.
-   To ostaja med nadaljnjim delom.
-2. Coinbasov gostovani posrednik podpira **Base Sepolia, ne pa Ethereum Sepolia**. Uradni
-   x402 krak zato v tem repozitoriju teče samogostovano, v **testni konfiguraciji,
-   denominirani v ETH, na Ethereum Sepolii** (poravnava sintetična/mock) — primerjava
-   zakasnitev tako poteka na enem samem omrežju. **Prava** x402 poravnava pa še vedno
-   zahteva ERC-20 žeton z EIP-3009 (USDC/EURC), kar ostaja nadaljnje delo.
+1. **EIP-3009** (`transferWithAuthorization`) is what *official* x402 does: the payer signs an
+   authorisation, the facilitator pays the gas, and the payer needs none of the chain's native
+   token. That remains future work.
+2. Coinbase's hosted facilitator supports **Base Sepolia, but not Ethereum Sepolia**. The official
+   x402 branch in this repository therefore runs self-hosted, in **a test configuration denominated
+   in ETH on Ethereum Sepolia** (with synthetic/mock settlement) — so the latency comparison takes
+   place on a single network. **Real** x402 settlement, however, still requires an ERC-20 token with
+   EIP-3009 (USDC/EURC), which remains future work.
 
-**EURC.** Primerjava z reguliranim evrskim stabilnim kovancem (EURC) v tej kodi zavestno ni
-zajeta. Če bi se to vrnilo v obseg, je zgornji odstavek najcenejša pot: EURC je ERC-20 kot
-USDC, torej ista sprememba.
+**EURC.** A comparison with the regulated euro stablecoin (EURC) is deliberately not covered in this
+code. If it were to come back into scope, the paragraph above is the cheapest path: EURC is an
+ERC-20 just like USDC, so it is the same change.
 
-## 6. Kaj je pravzaprav vezano na verigo
+## 6. What is actually tied to the chain
 
-Večina sistema **ni**:
+Most of the system **is not**:
 
-| Sloj | Vezan na verigo? |
+| Layer | Tied to the chain? |
 |---|---|
-| protokol HTTP 402, plačilna zahteva, dokazni žeton | ne |
-| shema SQLite, enkratnost žetona, preprečevanje ponovitve | ne |
-| skrbniška prijava, korelacija seje `sid`, CSP, Caddy | ne |
-| merjena seja: dobroimetje, proračun, veljavnost, nonce | ne |
-| podpis bremenitve (EIP-191) | **da** — oblika podpisa je specifična za EVM |
-| preverjanje plačila (`getTransaction` / potrdilo) | **da** |
-| polnitev merjene seje | **da** — a to je ena sama pot |
+| the HTTP 402 protocol, the payment request, the proof token | no |
+| the SQLite schema, token single-use, replay prevention | no |
+| the admin login, the `sid` session correlation, CSP, Caddy | no |
+| the metered session: credit, budget, expiry, nonce | no |
+| the debit signature (EIP-191) | **yes** — the signature format is EVM-specific |
+| payment verification (`getTransaction` / the receipt) | **yes** |
+| topping up a metered session | **yes** — but that is a single code path |
 
-Od treh tokov je torej **merjeni najbolj prenosljiv**: verige se dotakne le enkrat na sejo.
-To je hkrati odgovor na vprašanje in argument za sam model merjene seje
-(„ena polnitev + N podpisanih bremenitev").
+Of the three flows, then, **the metered one is the most portable**: it touches the chain only once
+per session. That is at once the answer to the question and an argument for the metered-session
+model itself ("one top-up + N signed debits").

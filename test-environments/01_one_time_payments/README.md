@@ -1,405 +1,416 @@
-# 01 — Enkratno mikroplačilo za dostop do storitve
+# 01 — A single micropayment for service access
 
-Strežnik je **ponudnik** zaščitene storitve (demo odgovor ali zunanji API). Uporabnik za **eno**
-uporabo storitve opravi **eno** on-chain transakcijo na omrežju Ethereum Sepolia in s tem odklene
-dostop. Plačnik je lahko človek z **MetaMask** v brskalniku ali **headless merilni klient**
-(agent M2M) — protokolni potek je v obeh primerih enak.
+The server is the **provider** of a protected service (a demo response or an external API). For
+**one** use of the service the user makes **one** on-chain transaction on the Ethereum Sepolia
+network, and that unlocks access. The payer can be a human with **MetaMask** in the browser or a
+**headless measurement client** (an M2M agent) — the protocol flow is identical in both cases.
 
-Protokolni potek — **3 izmenjave / 6 sporočil HTTP** (vsaka vrstica z metodo je par zahteva +
-odgovor; vmesna vrstica je transakcija na verigi, ne sporočilo HTTP):
+Protocol flow — **3 exchanges / 6 HTTP messages** (every line with a method is a request +
+response pair; the line in between is an on-chain transaction, not an HTTP message):
 
 ```
-GET  /service                    → 402 Payment Required  (payment.requestId, znesek, prejemnik)
-     plačilo na Sepolii          → txHash
-POST /verify-payment             → 200 { proofToken }     (strežnik prebere verigo)
-POST /service  (X-Payment)       → 200 + vsebina
+GET  /service                    → 402 Payment Required  (payment.requestId, amount, recipient)
+     payment on Sepolia          → txHash
+POST /verify-payment             → 200 { proofToken }     (the server reads the chain)
+POST /service  (X-Payment)       → 200 + content
 ```
 
-Dokazni žeton je vezan na vir (`resource`), zato ga ni mogoče uporabiti za drug vir; vsak `txHash`
-je porabljen največ enkrat. Ta mapa je hkrati izhodišče za primerjavo z združeno izmenjavo
-(mapa [`06_x402`](../06_x402)) in z uradnim protokolom x402 v2 (razdelek [x402 v2](#x402-v2)).
+The proof token is bound to the resource (`resource`), so it cannot be used for a different
+resource; every `txHash` is spent at most once. This folder is also the baseline for the
+comparison against the merged exchange (folder [`06_x402`](../06_x402)) and against the official
+x402 v2 protocol (section [x402 v2](#x402-v2)).
 
-## Kaj poskus meri
+## What the experiment measures
 
-Za vsako ponovitev se izmeri latenca po fazah (v ms):
+Latency is measured per phase (in ms) for every run:
 
-| Stolpec | Faza |
+| Column | Phase |
 |---|---|
-| `t_izziv_ms` | `GET /service` → odgovor **402** |
-| `t_oddaja_ms` | oddaja transakcije v omrežje (v mock načinu samo lokalni podpis navidezne transakcije, brez oddaje) |
-| `t_potrditev_ms` | čakanje na potrditev v bloku (v mock načinu vedno `0` — veriga se ne uporablja) |
-| `t_preverjanje_ms` | `POST /verify-payment` → dokazni žeton |
-| `t_dostop_ms` | `POST /service` → vsebina |
-| `t_skupaj_ms` | skupni čas ene ponovitve, merjen zvezno od izziva do prejete vsebine (ne vsota zgornjih faz) |
+| `t_challenge_ms` | `GET /service` → **402** response |
+| `t_submit_ms` | submitting the transaction to the network (in mock mode only a local signature of a dummy transaction, with no submission) |
+| `t_confirm_ms` | waiting for confirmation in a block (always `0` in mock mode — the chain is not used) |
+| `t_verify_ms` | `POST /verify-payment` → proof token |
+| `t_access_ms` | `POST /service` → content |
+| `t_total_ms` | total time of one run, measured continuously from the challenge to the received content (not the sum of the phases above) |
 
-> `t_skupaj_ms` je merjen zvezno, zato **vključuje tudi premore `--pause-ms`**: klient počaka
-> `--pause-ms` po vsaki od treh izmenjav znotraj ponovitve in še enkrat med ponovitvami. Pri
-> `npm run real` (`--pause-ms 1500`) je `t_skupaj_ms` zato ≈ 4,5 s večji od dejanskega poteka; za
-> primerjave uporabite vsoto faz ali tečite z `--pause-ms 0`.
+> `t_total_ms` is measured continuously, so it **also includes the `--pause-ms` delays**: the
+> client waits `--pause-ms` after each of the three exchanges within a run, and once more between
+> runs. With `npm run real` (`--pause-ms 1500`), `t_total_ms` is therefore ≈ 4.5 s longer than the
+> actual flow; for comparisons use the sum of the phases, or run with `--pause-ms 0`.
 
-Strežnik odgovorom dodaja merilne glave, kar omogoča ločitev **strežniškega časa**, **branja
-verige (RPC)** in **klica zunanjega API** od omrežne latence:
+The server adds measurement headers to its responses, which makes it possible to separate
+**server time**, **chain reads (RPC)** and **the external API call** from network latency:
 
-| Glava | Kje nastane |
+| Header | Where it originates |
 |---|---|
-| `X-Request-Id` | v vsakem odgovoru |
-| `X-Server-Ms` | v vsakem odgovoru poti `/service`, `/verify-payment`, `/config`, `/health` |
-| `X-Chain-Read-Ms` | samo `POST /verify-payment` in samo, kadar se veriga res prebere (torej **ne** pri `MOCK_VERIFY=true`) |
-| `X-Downstream-Ms` | samo `POST /service` (demo odgovor ali klic zunanjega API) |
+| `X-Request-Id` | in every response |
+| `X-Server-Ms` | in every response on the `/service`, `/verify-payment`, `/config` and `/health` paths |
+| `X-Chain-Read-Ms` | only `POST /verify-payment`, and only when the chain is actually read (so **not** with `MOCK_VERIFY=true`) |
+| `X-Downstream-Ms` | only `POST /service` (demo response or external API call) |
 
-V načinu `--real` se beležijo še `gas_enote`, `cena_gas_wei`, `provizija_wei`, `provizija_eth`
-in številka bloka.
+In `--real` mode, `gas_units`, `gas_price_wei`, `fee_wei`, `fee_eth` and the block number are
+recorded as well.
 
-Poskus torej pokaže, kateri del skupne latence odpade na protokol HTTP 402 (nekaj ms) in kateri na
-verigo (potrditev bloka, tipično večina skupnega časa), ter kolikšen je strošek ene transakcije.
+The experiment therefore shows which part of the total latency belongs to the HTTP 402 protocol
+(a few ms) and which to the chain (block confirmation, typically most of the total time), and
+what a single transaction costs.
 
-## Zahteve
+## Requirements
 
-- **Node.js ≥ 20** in **npm** (strežnik in klient).
-- **Python ≥ 3.9** za analizo (`analiza/`).
-- Za **realni način**: financirana denarnica na omrežju **Ethereum Sepolia** (testni ETH iz
-  javnega faucet-a) in dostop do javnega RPC ponudnika. Repozitorij **ne vsebuje nobenih ključev**
-  — denarnico si ustvarite sami (glej [Namestitev](#namestitev)).
-- Mock način ne potrebuje ne sredstev ne dostopa do verige.
+- **Node.js ≥ 20** and **npm** (server and client).
+- **Python ≥ 3.9** for the analysis (`analysis/`).
+- For **real mode**: a funded wallet on the **Ethereum Sepolia** network (test ETH from a public
+  faucet) and access to a public RPC provider. The repository **contains no keys at all** — create
+  the wallet yourself (see [Installation](#installation)).
+- Mock mode needs neither funds nor chain access.
 
-## Struktura mape
+## Folder structure
 
 ```
-01_enkratna_placila/
-├─ streznik/      Express strežnik (ponudnik) + spletni vmesnik za MetaMask
-│  ├─ server.js         poti /config, /health, /service, /verify-payment
-│  ├─ x402.js           vzporedni način x402 v2 (poti /x402/*)
-│  ├─ db.js, db_x402.js hramba zahtevkov, žetonov in porabljenih txHash (SQLite)
-│  ├─ .env.example      predloga nastavitev
-│  ├─ wallet.example.json  predloga za naslov prejemnika (brez ključa)
-│  └─ public/           statična stran: index.html, app.js, styles.css,
-│                       x402-ui.js, x402-klient.js
-├─ klient/        headless merilni klient
-│  ├─ merilni_klient.js    meritve latence in varnostni testi
-│  ├─ x402-odjemalec.js    odjemalec za x402 v2
-│  ├─ generate-wallet.js   ustvari klient/wallet.json
-│  ├─ config.json          privzeti naslov strežnika in omrežje
-│  └─ wallet.example.json  predloga za plačnikovo denarnico
-├─ analiza/       analiza_latence.py, slog.py, requirements.txt
-└─ meritve/       izhodne datoteke CSV/JSON (mapa nastane ob prvem zagonu klienta;
-                  rezultati niso del repozitorija)
+01_one_time_payments/
+├─ server/        Express server (provider) + web UI for MetaMask
+│  ├─ server.js              /config, /health, /service, /verify-payment routes
+│  ├─ x402.js                parallel x402 v2 mode (/x402/* routes)
+│  ├─ db.js, db_x402.js      storage for requests, tokens and spent txHashes (SQLite)
+│  ├─ .env.example           settings template
+│  ├─ wallet.example.json    template for the recipient address (no key)
+│  └─ public/                static page: index.html, app.js, styles.css,
+│                            x402-ui.js, x402-browser.js
+├─ client/        headless measurement client
+│  ├─ measurement_client.js  latency measurements and security tests
+│  ├─ x402-client.js         client for x402 v2
+│  ├─ generate-wallet.js     creates client/wallet.json
+│  ├─ config.json            default server address and network
+│  └─ wallet.example.json    template for the payer's wallet
+├─ analysis/      latency_analysis.py, style.py, requirements.txt
+└─ measurements/  output CSV/JSON files (the folder is created on the client's first
+                  run; the results are not part of the repository)
 ```
 
-Opomba: `streznik/public/x402-klient.js` je **predzgrajen sveženj (~420 kB)**, priložen zato, da
-gradnja v brskalniku ni potrebna. `public/app.js` pa knjižnico `viem` uvozi neposredno z
-`https://esm.sh` (politika CSP to izrecno dovoljuje), zato demo **v brskalniku** potrebuje dostop
-do interneta. Headless merilni klient tega ne potrebuje — vse meritve tečejo brez njega.
+Note: `server/public/x402-browser.js` is a **prebuilt bundle (~420 kB)**, shipped so that no
+browser-side build step is needed. `public/app.js`, on the other hand, imports the `viem` library
+straight from `https://esm.sh` (the CSP policy explicitly allows this), so the demo needs internet
+access **in the browser**. The headless measurement client does not — every measurement runs
+without it.
 
-## Namestitev
+## Installation
 
 ```bash
-cd streznik && npm ci     # ali: npm install
-cd ../klient  && npm ci
+cd server && npm ci     # or: npm install
+cd ../client  && npm ci
 ```
 
-Nastavitve strežnika:
+Server settings:
 
 ```bash
-cp streznik/.env.example streznik/.env
+cp server/.env.example server/.env
 ```
 
-Za mock način `.env` ni nujen (`npm run mock` sam nastavi `MOCK_VERIFY=true`), za realni tek pa
-preverite vsaj `RPC_URL`, `MIN_CONFIRMATIONS` in `SERVICE_PRICE_ETH`.
+For mock mode `.env` is not required (`npm run mock` sets `MOCK_VERIFY=true` by itself), but for a
+real run check at least `RPC_URL`, `MIN_CONFIRMATIONS` and `SERVICE_PRICE_ETH`.
 
-### Denarnici (obvezen korak pred prvim zagonom)
+### Wallets (a mandatory step before the first run)
 
-- **Strežnik — samo naslov prejemnika, nikoli privatnega ključa:**
+- **Server — the recipient address only, never a private key:**
 
   ```bash
-  cp streznik/wallet.example.json streznik/wallet.json
-  # v wallet.json vpišite polje "address": naslov, ki prejema plačila
+  cp server/wallet.example.json server/wallet.json
+  # in wallet.json fill in the "address" field: the address that receives payments
   ```
 
-  Brez datoteke `streznik/wallet.json` se strežnik **ob zagonu takoj konča** z napako.
+  Without `server/wallet.json` the server **exits immediately at startup** with an error.
 
-- **Klient — samo za `--real`:**
+- **Client — only for `--real`:**
 
   ```bash
-  cd klient && npm run gen-wallet     # ustvari wallet.json s pravicami 0600
+  cd client && npm run gen-wallet     # creates wallet.json with 0600 permissions
   ```
 
-  Skripta obstoječe datoteke ne prepiše. Namesto tega lahko kopirate `wallet.example.json` v
-  `wallet.json` in vpišete privatni ključ **financirane** denarnice Sepolia (potrebuje testni ETH
-  za znesek in gas). V **mock** načinu klientova denarnica ni potrebna.
+  The script never overwrites an existing file. Alternatively you can copy `wallet.example.json`
+  to `wallet.json` and enter the private key of a **funded** Sepolia wallet (it needs test ETH for
+  both the amount and gas). In **mock** mode the client wallet is not needed.
 
-Obe datoteki `wallet.json` sta izključeni z `.gitignore` in se nikoli ne objavita.
+Both `wallet.json` files are excluded by `.gitignore` and are never published.
 
-### Pomembne nastavitve v `streznik/.env`
+### Key settings in `server/.env`
 
-| Spremenljivka | Privzeto | Pomen |
+| Variable | Default | Meaning |
 |---|---|---|
-| `MERCHANT_PORT` | `3000` | vrata strežnika (posluša na `0.0.0.0`) |
-| `NETWORK` | `sepolia` | omrežje |
-| `RPC_URL` | javni Sepolia RPC | ponudnik za branje verige |
-| `MIN_CONFIRMATIONS` | `1` | zahtevano število potrditev |
-| `MOCK_VERIFY` | `false` | `true` preskoči branje verige |
-| `SERVICE_PRICE_ETH` | `0.0000001` | cena ene uporabe storitve |
-| `ETH_EUR_RATE` | `2500` | tečaj **samo za prikaz** v EUR |
-| `PROOF_TOKEN_TTL_SECONDS` | `600` | veljavnost dokaznega žetona |
-| `PAYMENT_REQUEST_TTL_SECONDS` | `1800` | veljavnost plačilne zahteve (znižajte za test poteka) |
-| `OPENAI_API_KEY` | prazno | prazno = determinističen demo odgovor; nastavljen ključ vklopi pravi zunanji klic in poveča `t_dostop_ms` |
-| `RATE_VERIFY_PER_MIN` | `60` | omejitev zahtev na `POST /verify-payment` (na naslov IP, okno 60 s) |
-| `RATE_SERVICE_PER_MIN` | `120` | omejitev zahtev na `/service` (na naslov IP, okno 60 s) |
+| `MERCHANT_PORT` | `3000` | server port (listens on `0.0.0.0`) |
+| `NETWORK` | `sepolia` | network |
+| `RPC_URL` | public Sepolia RPC | provider for reading the chain |
+| `MIN_CONFIRMATIONS` | `1` | required number of confirmations |
+| `MOCK_VERIFY` | `false` | `true` skips reading the chain |
+| `SERVICE_PRICE_ETH` | `0.0000001` | price of one use of the service |
+| `ETH_EUR_RATE` | `2500` | exchange rate **for display in EUR only** |
+| `PROOF_TOKEN_TTL_SECONDS` | `600` | proof token validity |
+| `PAYMENT_REQUEST_TTL_SECONDS` | `1800` | payment request validity (lower it to test expiry) |
+| `OPENAI_API_KEY` | empty | empty = deterministic demo response; setting a key enables a real external call and increases `t_access_ms` |
+| `RATE_VERIFY_PER_MIN` | `60` | request limit on `POST /verify-payment` (per IP address, 60 s window) |
+| `RATE_SERVICE_PER_MIN` | `120` | request limit on `/service` (per IP address, 60 s window) |
 
-Zadnji dve omejitvi neposredno omejujeta število ponovitev v eni minuti: ena ponovitev porabi
-**eno** zahtevo `verify-payment` in **dve** zahtevi `/service`. Mock tek brez premora zato brez
-spremembe nastavitev zdrži največ **60 ponovitev na minuto**; za več ponovitev zvišajte
-`RATE_VERIFY_PER_MIN` in `RATE_SERVICE_PER_MIN` ali uporabite `--pause-ms`.
+Those last two limits cap the number of runs per minute directly: one run consumes **one**
+`verify-payment` request and **two** `/service` requests. With the settings unchanged, a mock run
+without pauses therefore sustains at most **60 runs per minute**; for more runs, raise
+`RATE_VERIFY_PER_MIN` and `RATE_SERVICE_PER_MIN`, or use `--pause-ms`.
 
-Privzeta cena `0.0000001` ETH pri `ETH_EUR_RATE=2500` znese ≈ **0,00025 EUR** (0,025 centa).
-Gre za **testni** ETH brez denarne vrednosti; pretvorba v EUR je zgolj poročevalska.
+At `ETH_EUR_RATE=2500` the default price of `0.0000001` ETH works out to ≈ **0.00025 EUR**
+(0.025 cents). This is **test** ETH with no monetary value; the EUR conversion is purely for
+reporting.
 
-## Lokalni zagon — mock (brez sredstev)
+## Local run — mock (no funds)
 
-Mock način meri **protokolno latenco** brez branja verige, zato je ponovljiv in ne troši sredstev.
+Mock mode measures **protocol latency** without reading the chain, so it is reproducible and
+spends no funds.
 
-**Terminal 1 — strežnik:**
-
-```bash
-cd streznik
-npm run mock          # NODE_ENV=development MOCK_VERIFY=true, vrata 3000
-```
-
-**Terminal 2 — merilni klient:**
+**Terminal 1 — server:**
 
 ```bash
-cd klient
-npm run mock          # 50 ponovitev
-# ali: npm start      # 30 ponovitev
-# ali: node merilni_klient.js --mock --runs 50 --out ../meritve/enkratna_mock.csv
+cd server
+npm run mock          # NODE_ENV=development MOCK_VERIFY=true, port 3000
 ```
 
-Brskalnik (MetaMask demo): `http://127.0.0.1:3000` — panel „Meritve" prikaže čase posameznih faz.
-
-## Lokalni zagon — realne meritve (Sepolia)
-
-Zahteva financirano denarnico v `klient/wallet.json` in naslov prejemnika v `streznik/wallet.json`.
-
-**Terminal 1 — strežnik:**
+**Terminal 2 — measurement client:**
 
 ```bash
-cd streznik
-npm start             # brez MOCK_VERIFY: vsako plačilo se preveri na verigi
-# razvojni izpis:  npm run dev
+cd client
+npm run mock          # 50 runs
+# or: npm start       # 30 runs
+# or: node measurement_client.js --mock --runs 50 --out ../measurements/one_time_mock.csv
 ```
 
-**Terminal 2 — klient:**
+Browser (MetaMask demo): `http://127.0.0.1:3000` — the "Measurements" panel shows the timing of
+each phase.
+
+## Local run — real measurements (Sepolia)
+
+Requires a funded wallet in `client/wallet.json` and a recipient address in `server/wallet.json`.
+
+**Terminal 1 — server:**
 
 ```bash
-cd klient
-npm run real          # = node merilni_klient.js --real --runs 5 --pause-ms 1500
+cd server
+npm start             # without MOCK_VERIFY: every payment is verified on the chain
+# development output:  npm run dev
 ```
 
-Število ponovitev držite nizko (5–10): vsaka ponovitev je prava transakcija in porabi testni ETH
-ter čaka na potrditev bloka. Premor `--pause-ms` prepreči težave z zaporedjem `nonce` (in se
-šteje v `t_skupaj_ms` — glej opombo pri tabeli faz).
+**Terminal 2 — client:**
 
-Za zajem v Wiresharku uporabljajte **navadni HTTP** (brez TLS), sicer glave `X-Payment`,
-`X-Server-Ms` in telo odgovora **402** v zajemu niso vidni. Postopek zajema je opisan v
-`../README.md`.
+```bash
+cd client
+npm run real          # = node measurement_client.js --real --runs 5 --pause-ms 1500
+```
 
-### Argumenti merilnega klienta
+Keep the number of runs low (5–10): every run is a real transaction, spends test ETH and waits for
+a block confirmation. The `--pause-ms` delay avoids `nonce` ordering problems (and counts towards
+`t_total_ms` — see the note under the phase table).
 
-| Argument | Privzeto | Pomen |
+For a Wireshark capture, use **plain HTTP** (no TLS); otherwise the `X-Payment` and `X-Server-Ms`
+headers and the body of the **402** response are not visible in the capture. The capture procedure
+is described in `../README.md`.
+
+### Measurement client arguments
+
+| Argument | Default | Meaning |
 |---|---|---|
-| `--mock` / `--real` | `--mock` | način delovanja |
-| `--runs N` | `30` | število ponovitev |
-| `--pause-ms N` | `1000` (real), `0` (mock) | premor **med izmenjavami znotraj ponovitve (3×) in med ponovitvami**; šteje se v `t_skupaj_ms` |
-| `--prompt "…"` | demo besedilo | vsebina zahteve za storitev |
-| `--x402` | izklopljeno | uporabi poti x402 v2 |
-| `--security` | izklopljeno | zaženi varnostne teste namesto meritve |
-| `--out <pot>` | privzeto ime v `meritve/` | pot izhodnega CSV |
+| `--mock` / `--real` | `--mock` | operating mode |
+| `--runs N` | `30` | number of runs |
+| `--pause-ms N` | `1000` (real), `0` (mock) | delay **between the exchanges within a run (3×) and between runs**; counts towards `t_total_ms` |
+| `--prompt "…"` | demo text | the request content sent to the service |
+| `--x402` | off | use the x402 v2 routes |
+| `--security` | off | run the security tests instead of the measurements |
+| `--out <path>` | default name in `measurements/` | path of the output CSV |
 
-## Zagon na oddaljenem strežniku
+## Running on a remote server
 
-Ponudnik (`streznik/`) teče na strežniku, plačnik (`klient/`) na lokalnem računalniku — povezavo
-vedno vzpostavi plačnik, zato mora biti dosegljiv le strežnik.
+The provider (`server/`) runs on the server and the payer (`client/`) on the local machine — the
+payer always opens the connection, so only the server has to be reachable.
 
-**Na strežniku:**
+**On the server:**
 
 ```bash
-ssh <UPORABNIK>@<IP_STREZNIKA>
-git clone <naslov-repozitorija>
-cd <repozitorij>/testna-okolja/01_enkratna_placila/streznik
+ssh <USER>@<SERVER_IP>
+git clone <repository-url>
+cd <repository>/test-environments/01_one_time_payments/server
 npm ci
 cp .env.example .env
-cp wallet.example.json wallet.json     # vpišite naslov prejemnika
-sudo ufw allow 3000/tcp                # odprite vrata strežnika
-npm run mock                           # ali: npm start (realni način)
+cp wallet.example.json wallet.json     # fill in the recipient address
+sudo ufw allow 3000/tcp                # open the server port
+npm run mock                           # or: npm start (real mode)
 ```
 
-Preverjanje z lokalnega računalnika: `curl http://<IP_STREZNIKA>:3000/health`.
+Check from the local machine: `curl http://<SERVER_IP>:3000/health`.
 
-**Lokalno — klient meri proti oddaljenemu strežniku.** Zadošča ena okoljska spremenljivka
-`MERCHANT_URL` (ima prednost pred `klient/config.json`):
+**Locally — the client measures against the remote server.** A single environment variable,
+`MERCHANT_URL`, is enough (it takes precedence over `client/config.json`):
 
 ```bash
-cd klient
-MERCHANT_URL=http://<IP_STREZNIKA>:3000 npm run mock
-MERCHANT_URL=http://<IP_STREZNIKA>:3000 npm run real
+cd client
+MERCHANT_URL=http://<SERVER_IP>:3000 npm run mock
+MERCHANT_URL=http://<SERVER_IP>:3000 npm run real
 ```
 
-Ta mapa nima skrbniške prijave, zato dodatni žetoni niso potrebni. Priporočeno je namesto
-naslova IP uporabiti ime gostitelja — ob menjavi naslova ni treba spreminjati konfiguracije.
+This folder has no admin login, so no extra tokens are needed. Using a hostname instead of an IP
+address is recommended — the configuration then survives a change of address.
 
-> **Opozorilo.** Strežnik teče po **navadnem HTTP** (namenoma, da je promet viden v Wiresharku),
-> zato dostop omejite na svoj naslov IP (npr. `sudo ufw allow from <vaš-IP> to any port 3000
-> proto tcp`) in strežnik po končanih meritvah ugasnite. Ne izpostavljajte ga javno dlje, kot je
-> potrebno, in ne uporabljajte pravih sredstev.
+> **Warning.** The server runs over **plain HTTP** (deliberately, so that the traffic is visible in
+> Wireshark), so restrict access to your own IP address (e.g. `sudo ufw allow from <YOUR_IP> to
+> any port 3000 proto tcp`) and shut the server down once the measurements are finished. Do not
+> expose it publicly for longer than necessary, and do not use real funds.
 
-## Analiza rezultatov
+## Analysing the results
 
 ```bash
-cd analiza
+cd analysis
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python3 analiza_latence.py
+python3 latency_analysis.py
 ```
 
-Brez argumenta skripta sama poišče CSV v `../meritve/` po vrstnem redu **`enkratna_real.csv`,
-nato `enkratna_mock.csv`** (realne meritve imajo prednost). Datoteko lahko podate tudi izrecno:
+With no argument the script finds a CSV in `../measurements/` by itself, in the order
+**`one_time_real.csv`, then `one_time_mock.csv`** (real measurements take precedence). You can
+also name the file explicitly:
 
 ```bash
-python3 analiza_latence.py ../meritve/enkratna_mock.csv
-python3 analiza_latence.py ../meritve/enkratna_real.csv --out slike
+python3 latency_analysis.py ../measurements/one_time_mock.csv
+python3 latency_analysis.py ../measurements/one_time_real.csv --out figures
 ```
 
-Zastavica `--vzorec` doda na slike vodni žig „SIMULIRANI PRIMER" (za slike iz sintetičnih
-podatkov). Privzeti izhodni imenik je `analiza/slike/`.
+The `--sample` flag stamps a "SIMULATED EXAMPLE" watermark on the figures (for figures built from
+synthetic data). The default output directory is `analysis/figures/`.
 
-Skripta obdela **samo** CSV lastnega protokola. Datoteke `x402_enkratna_*.csv` analizira
-`../primerjava/primerjava_x402.py`.
+The script processes **only** the CSVs of this project's own protocol. `x402_enkratna_*.csv` files
+are analysed by `../comparison/comparison_x402.py`.
 
-## Pričakovani izhodi
+## Expected outputs
 
-Vse merilne datoteke nastanejo v `01_enkratna_placila/meritve/`:
+Every measurement file is created in `01_one_time_payments/measurements/`:
 
-| Datoteka | Nastane pri |
+| File | Created by |
 |---|---|
-| `enkratna_mock.csv` + `enkratna_mock_povzetek.json` | `npm run mock` / `npm start` (klient) |
-| `enkratna_real.csv` + `enkratna_real_povzetek.json` | `npm run real` |
+| `one_time_mock.csv` + `one_time_mock_povzetek.json` | `npm run mock` / `npm start` (client) |
+| `one_time_real.csv` + `one_time_real_povzetek.json` | `npm run real` |
 | `x402_enkratna_mock.csv` + `x402_enkratna_mock_povzetek.json` | `--x402` |
-| `varnostni_testi_mock.csv` / `varnostni_testi_real.csv` | `--security` |
-| `varnostni_testi_x402_mock.csv` | `--x402 --security` |
+| `security_tests_mock.csv` / `security_tests_real.csv` | `--security` |
+| `security_tests_x402_mock.csv` | `--x402 --security` |
 
-Klient v obstoječi CSV **dopisuje** vrstice (glavo zapiše le ob prvem nastanku datoteke),
-datoteko `_povzetek.json` pa vsakič prepiše. Pred novo serijo meritev staro datoteko izbrišite
-(`rm ../meritve/enkratna_mock.csv`), sicer se ponovitve seštevajo, povzetek JSON pa opisuje samo
-zadnji tek.
+The client **appends** rows to an existing CSV (it writes the header only when the file is first
+created), while it overwrites `_summary.json` every time. Delete the old file before a new
+measurement series (`rm ../measurements/one_time_mock.csv`), otherwise the runs accumulate while
+the JSON summary still describes only the last one.
 
-Standardni CSV ima 20 stolpcev:
+The standard CSV has 20 columns:
 
 ```
-zap,cas_iso,nacin,t_izziv_ms,t_oddaja_ms,t_potrditev_ms,t_preverjanje_ms,t_dostop_ms,
-t_skupaj_ms,streznik_preverjanje_ms,veriga_branje_ms,streznik_dostop_ms,zunanji_api_ms,
-gas_enote,cena_gas_wei,provizija_wei,provizija_eth,blok,tx_hash,status
+seq,timestamp_iso,mode,t_challenge_ms,t_submit_ms,t_confirm_ms,t_verify_ms,t_access_ms,
+t_total_ms,server_verify_ms,chain_read_ms,server_access_ms,external_api_ms,
+gas_units,gas_price_wei,fee_wei,fee_eth,block,tx_hash,status
 ```
 
-CSV za x402 ima 25 stolpcev (`protokol`, `topologija`, `omrezje`, `sredstvo`, `placnik_gasa`,
-`t_402_ms`, `t_podpis_ms`, `t_placilo_http_ms`, `preveri_ms`, `poravnaj_ms`, `idempotenca`,
-`sinteticni_tx` idr.).
+The x402 CSV has 25 columns (`protocol`, `topology`, `network`, `asset`, `gas_payer`,
+`t_402_ms`, `t_sign_ms`, `t_payment_http_ms`, `verify_ms`, `settle_ms`, `idempotency`,
+`synthetic_tx` and others).
 
-Analiza zapiše v `analiza/slike/`: `01_latenca_boxplot.png`, `02_sestava_faz.png`,
-`03_povzetek_tabela.png` in `povzetek_latenca.csv`.
+The analysis writes to `analysis/figures/`: `01_latency_boxplot.png`, `02_phase_breakdown.png`,
+`03_summary_table.png` and `latency_summary.csv`.
 
-**Signal uspeha.** Klient sproti izpisuje vrstico na ponovitev in na koncu povzetek
-(`min / mediana / povprečje / p95 / maks` po fazah) ter pot do zapisanega CSV in JSON. Stolpec
-`status` nosi statusno kodo HTTP zadnjega koraka, pri uspešnih ponovitvah torej `200`; neuspešna
-ponovitev se v CSV **ne zapiše** (izpiše se kot `✗ ZAP <n> napaka: …`), zato je merilo uspeha
-vrstica `POVZETEK · uspešnih <n>/<runs>`. Strežnik ob zagonu izpiše poslušalna vrata in naslov
-prejemnika. Analitična skripta izpiše `✓` za vsako ustvarjeno datoteko.
+**Success signal.** The client prints one line per run as it goes, and a summary at the end
+(`min / median / mean / p95 / max` per phase) together with the path to the CSV and JSON it wrote.
+The `status` column carries the HTTP status code of the last step, so `200` for successful runs; a
+failed run is **not** written to the CSV (it is reported as `✗ RUN <n> error: …`), which makes the
+`SUMMARY · succeeded <n>/<runs>` line the measure of success. At startup the server prints the port
+it listens on and the recipient address. The analysis script prints `✓` for every file it creates.
 
-Strežnik si ob prvem zagonu ustvari podatkovno bazo `streznik/data/x402_enkratna.db` (in
-`x402_placila.db` pri `X402_MODE=self`); mapa `data/` je izključena z `.gitignore`.
+On its first start the server creates the `server/data/x402_one_time.db` database (and
+`x402_payments.db` when `X402_MODE=self`); the `data/` folder is excluded by `.gitignore`.
 
-## Varnostni testi
+## Security tests
 
-Preverjajo, da protokol zavrne napačne, ponovljene in ponarejene vhode.
+These check that the protocol rejects malformed, replayed and forged inputs.
 
-**Lastni protokol:**
+**This project's own protocol:**
 
 ```bash
-# strežnik za mock nabor mora teči z MOCK_VERIFY=true:
-cd streznik && npm run mock
-# klient:
-cd klient
-npm run security                             # mock (7 testov)
-node merilni_klient.js --security --real     # realni način (strežnik: npm start)
+# the server for the mock set must run with MOCK_VERIFY=true:
+cd server && npm run mock
+# client:
+cd client
+npm run security                             # mock (7 tests)
+node measurement_client.js --security --real     # real mode (server: npm start)
 ```
 
-Mock izvede 7 testov: dostop brez plačila → **402**, napačen format `txHash` → **400**,
-neobstoječ `requestId` → **400**, ponarejen dokazni žeton → **403**, ponovna uporaba istega
-`txHash` (replay) → **400**, prva poraba žetona → **200**, ponovna poraba istega žetona → **403**.
-V načinu `--real` so zadnji trije nadomeščeni s testi napačnega prejemnika, prenizkega zneska in
-neujemanja plačnika; ti so v izpisu označeni kot **preskočeni** (izvedba bi zahtevala namerno
-napačne transakcije), a se štejejo kot uspeh.
+The mock set runs 7 tests: access without payment → **402**, malformed `txHash` → **400**,
+non-existent `requestId` → **400**, forged proof token → **403**, reuse of the same `txHash`
+(replay) → **400**, first use of a token → **200**, second use of the same token → **403**.
+In `--real` mode the last three are replaced by tests for a wrong recipient, an insufficient
+amount and a payer mismatch; these are marked **skipped** in the output (running them would
+require deliberately incorrect transactions), but they count as passed.
 
-Izhod: `meritve/varnostni_testi_{mock,real}.csv` s stolpci `test,pricakovano,dejansko,uspeh,opomba`.
+Output: `measurements/security_tests_{mock,real}.csv` with the columns
+`test,expected,actual,passed,note`.
 
-**x402 v2 (14 testov T1–T14, samo mock):**
+**x402 v2 (14 tests, T1–T14, mock only):**
 
 ```bash
-# strežnik:
-cd streznik && X402_MODE=self X402_MOCK=true X402_MOCK_FAULTS=true npm run mock
-# klient:
-cd klient && node merilni_klient.js --x402 --security
+# server:
+cd server && X402_MODE=self X402_MOCK=true X402_MOCK_FAULTS=true npm run mock
+# client:
+cd client && node measurement_client.js --x402 --security
 ```
 
-`X402_MOCK_FAULTS=true` je **obvezen** — testa T11 in T12 (vsiljene napake poravnave) brez njega
-padeta. Klient nastavi izhodno kodo `1`, če ni uspešnih vseh 14 testov.
-Izhod: `meritve/varnostni_testi_x402_mock.csv`.
+`X402_MOCK_FAULTS=true` is **mandatory** — tests T11 and T12 (forced settlement failures) fail
+without it. The client exits with code `1` unless all 14 tests pass.
+Output: `measurements/security_tests_x402_mock.csv`.
 
 ## x402 v2
 
-Poleg lastnega toka (A1, domači ETH) mapa podpira **uradni protokol x402 v2** (A2) kot vzporedni
-način: `GET /x402/service` v **samofacilitirani** topologiji — strežnik plačilo sam preveri **in**
-poravna, odjemalec pa samo podpiše pooblastilo **EIP-3009**. Namesto ločene izmenjave za dokazni
-žeton se plačilo prenese v glavah protokola x402 v2: strežnik izziv opiše v glavi
-`PAYMENT-REQUIRED` odgovora 402, odjemalec podpisano pooblastilo pošlje v `PAYMENT-SIGNATURE`,
-strežnik pa izid poravnave vrne v `PAYMENT-RESPONSE`. Potek ima zato **2 izmenjavi / 4 sporočila**
-(glava `X-Payment` iz lastnega toka se tu ne uporablja).
+Alongside this project's own flow (A1, native ETH), the folder supports the **official x402 v2
+protocol** (A2) as a parallel mode: `GET /x402/service` in a **self-facilitated** topology — the
+server verifies **and** settles the payment itself, while the client only signs an **EIP-3009**
+authorisation. Instead of a separate exchange for the proof token, the payment travels in the
+x402 v2 protocol headers: the server describes the challenge in the `PAYMENT-REQUIRED` header of
+the 402 response, the client sends the signed authorisation in `PAYMENT-SIGNATURE`, and the server
+returns the settlement outcome in `PAYMENT-RESPONSE`. The flow therefore takes **2 exchanges /
+4 messages** (the `X-Payment` header from this project's own flow is not used here).
 
 ```bash
-# strežnik (mock — brez sredstev):
-cd streznik && X402_MODE=self X402_MOCK=true npm run mock
-# klient:
-cd klient && node merilni_klient.js --x402 --runs 30     # → meritve/x402_enkratna_mock.csv
+# server (mock — no funds):
+cd server && X402_MODE=self X402_MOCK=true npm run mock
+# client:
+cd client && node measurement_client.js --x402 --runs 30     # → measurements/x402_enkratna_mock.csv
 ```
 
-Ob `X402_MODE=self` se priklopijo poti `GET /x402/config`, `GET /x402/service` in
-`GET /x402/payment/:id`; odgovori nosijo dodatne glave `X-Verify-Ms`, `X-Settle-Ms` in
-`X-X402-Idempotent-Replay`.
+With `X402_MODE=self` the routes `GET /x402/config`, `GET /x402/service` and
+`GET /x402/payment/:id` are mounted; their responses carry the extra headers `X-Verify-Ms`,
+`X-Settle-Ms` and `X-X402-Idempotent-Replay`.
 
-> **Omejitev testne konfiguracije.** V tej postavitvi so zneski v **ETH na Ethereum Sepolii**,
-> domači ETH pa nima pogodbe **EIP-3009**. Zato je mogoč **samo mock/sintetični** tek: strežnik z
-> `X402_MODE=self` **brez** `X402_MOCK=true` in brez naslova prave pogodbe EIP-3009 ob zagonu
-> namenoma **vrže napako**. Pravi tek zahteva žeton s podporo EIP-3009 (nastavitve
-> `X402_USDC_ADDRESS`, `X402_ASSET_*`) in financirano poravnalno denarnico.
+> **Limitation of the test configuration.** In this setup the amounts are denominated in **ETH on
+> Ethereum Sepolia**, and native ETH has no **EIP-3009** contract. Only a **mock/synthetic** run is
+> therefore possible: a server started with `X402_MODE=self` but **without** `X402_MOCK=true` and
+> without the address of a real EIP-3009 contract deliberately **throws an error** at startup. A
+> real run requires a token with EIP-3009 support (the `X402_USDC_ADDRESS` and `X402_ASSET_*`
+> settings) and a funded settlement wallet.
 
-V brskalniku je na strani kartica „x402 v2" (MetaMask podpiše pooblastilo; uporablja sveženj
-`public/x402-klient.js`). Podrobna razlaga protokola in vseh spremenljivk `X402_*`: `../README.md`.
+In the browser the page carries an "x402 v2" card (MetaMask signs the authorisation; it uses the
+`public/x402-browser.js` bundle). For a detailed explanation of the protocol and of every `X402_*`
+variable, see `../README.md`.
 
-## Odpravljanje težav
+## Troubleshooting
 
-| Simptom | Vzrok in rešitev |
+| Symptom | Cause and fix |
 |---|---|
-| Strežnik se takoj konča | manjka `streznik/wallet.json` — ustvarite ga iz `wallet.example.json` |
-| Klient javi manjkajočo denarnico | `--real` brez `klient/wallet.json` — poženite `npm run gen-wallet` **v mapi `klient/`** |
-| Klient meri `127.0.0.1` namesto strežnika | nastavite `MERCHANT_URL=http://<IP_STREZNIKA>:3000` |
-| `EADDRINUSE` na vratih 3000 | vrata zaseda drug proces — spremenite `MERCHANT_PORT` v `.env` |
-| Ponovitve padajo s **429** | dosežena omejitev `RATE_VERIFY_PER_MIN` (60) ali `RATE_SERVICE_PER_MIN` (120) — zmanjšajte `--runs`, dodajte `--pause-ms` ali zvišajte omejitvi |
-| Realni tek se ustavi ali poteče | počasen ali omejen javni RPC — zamenjajte `RPC_URL`, povečajte `--pause-ms` |
-| Nezadostna sredstva | denarnica potrebuje testni ETH za znesek **in** gas (javni faucet Sepolia) |
-| Analiza javi „Ni najdenega CSV" | najprej poženite meritev: `cd ../klient && npm run mock` |
-| x402 varnostna testa T11/T12 padeta | manjka `X402_MOCK_FAULTS=true` pri zagonu strežnika |
+| The server exits immediately | `server/wallet.json` is missing — create it from `wallet.example.json` |
+| The client reports a missing wallet | `--real` without `client/wallet.json` — run `npm run gen-wallet` **inside the `client/` folder** |
+| The client measures `127.0.0.1` instead of the server | set `MERCHANT_URL=http://<SERVER_IP>:3000` |
+| `EADDRINUSE` on port 3000 | another process holds the port — change `MERCHANT_PORT` in `.env` |
+| Runs fail with **429** | the `RATE_VERIFY_PER_MIN` (60) or `RATE_SERVICE_PER_MIN` (120) limit was reached — lower `--runs`, add `--pause-ms`, or raise the limits |
+| A real run stalls or times out | a slow or throttled public RPC — change `RPC_URL`, increase `--pause-ms` |
+| Insufficient funds | the wallet needs test ETH for both the amount **and** gas (public Sepolia faucet) |
+| The analysis reports "No CSV found" | run a measurement first: `cd ../client && npm run mock` |
+| x402 security tests T11/T12 fail | `X402_MOCK_FAULTS=true` is missing from the server startup |
 
-Splošna navodila: [`testna-okolja/README.md`](../README.md) — namestitev, postavitev strežnika in
-pregled vseh ukazov; [zajem z Wiresharkom](../README.md#zajem-z-wiresharkom) (zajem prometa);
-[uradni protokol x402 v2](../README.md#uradni-protokol-x402-v2);
-[skrbniška prijava](../README.md#skrbniška-prijava) (velja za mape 02–05, ne za to mapo).
+General instructions: [`test-environments/README.md`](../README.md) — installation, server
+deployment and an overview of every command; [Wireshark capture](../README.md#wireshark-capture)
+(capturing traffic); [official x402 v2 protocol](../README.md#official-x402-v2-protocol);
+[admin login](../README.md#admin-login) (applies to folders 02–05, not to this one).

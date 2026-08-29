@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 /**
- * Generator Ethereum denarnic za X402 protokol
- * Ustvari dve ločeni denarnici: za merchant (server) in klient
+ * Ethereum wallet generator for the X402 protocol
+ * Creates two separate wallets: one for the merchant (server) and one for the client
  */
 
 import { Wallet } from 'ethers';
@@ -14,18 +14,18 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 console.log('\n╔════════════════════════════════════════════════════════════╗');
-console.log('║   ETHEREUM DENARNICE - Generator                          ║');
+console.log('║   ETHEREUM WALLETS - Generator                            ║');
 console.log('╚════════════════════════════════════════════════════════════╝\n');
 
-// Preveri če denarnice že obstajajo
+// Check whether the wallets already exist
 const merchantPath = path.join(__dirname, 'server', 'wallet.json');
-const clientPath = path.join(__dirname, 'klient', 'wallet.json');
+const clientPath = path.join(__dirname, 'client', 'wallet.json');
 
 const merchantExists = fs.existsSync(merchantPath);
 const clientExists = fs.existsSync(clientPath);
 
 if (merchantExists || clientExists) {
-  console.log('⚠️  OPOZORILO: Denarnice že obstajajo!\n');
+  console.log('⚠️  WARNING: Wallets already exist!\n');
   
   if (merchantExists) {
     const existing = JSON.parse(fs.readFileSync(merchantPath, 'utf-8'));
@@ -34,19 +34,19 @@ if (merchantExists || clientExists) {
   
   if (clientExists) {
     const existing = JSON.parse(fs.readFileSync(clientPath, 'utf-8'));
-    console.log('   Klient wallet:', existing.address);
+    console.log('   Client wallet:', existing.address);
   }
   
-  console.log('\n❌ ABORT: Če želiš ustvariti nove denarnice:');
-  console.log('   1. Varno shrani obstoječe wallet.json datoteke');
-  console.log('   2. Izbriši jih ročno');
-  console.log('   3. Ponovno zaženi ta skripta\n');
-  console.log('⚠️  POZOR: Izguba privateKey = izguba dostopa do sredstev!\n');
+  console.log('\n❌ ABORT: To create new wallets:');
+  console.log('   1. Safely back up the existing wallet.json files');
+  console.log('   2. Delete them manually');
+  console.log('   3. Run this script again\n');
+  console.log('⚠️  CAUTION: Losing the privateKey = losing access to the funds!\n');
   process.exit(1);
 }
 
-// Ustvari merchant denarnico
-console.log('Ustvarjam MERCHANT denarnico...');
+// Create the merchant wallet
+console.log('Creating the MERCHANT wallet...');
 const merchantWallet = Wallet.createRandom();
 const merchantData = {
   address: merchantWallet.address,
@@ -55,13 +55,13 @@ const merchantData = {
   createdAt: new Date().toISOString()
 };
 
-// Shrani merchant wallet
+// Save the merchant wallet
 fs.writeFileSync(merchantPath, JSON.stringify(merchantData, null, 2), { mode: 0o600 });
-console.log('✓ Merchant denarnica shranjena v:', merchantPath);
-console.log('  Naslov:', merchantData.address);
+console.log('✓ Merchant wallet saved to:', merchantPath);
+console.log('  Address:', merchantData.address);
 
-// Ustvari klient denarnico
-console.log('\nUstvarjam KLIENT denarnico...');
+// Create the client wallet
+console.log('\nCreating the CLIENT wallet...');
 const clientWallet = Wallet.createRandom();
 const clientData = {
   address: clientWallet.address,
@@ -70,26 +70,26 @@ const clientData = {
   createdAt: new Date().toISOString()
 };
 
-// Shrani klient wallet
+// Save the client wallet
 fs.writeFileSync(clientPath, JSON.stringify(clientData, null, 2), { mode: 0o600 });
-console.log('✓ Klient denarnica shranjena v:', clientPath);
-console.log('  Naslov:', clientData.address);
+console.log('✓ Client wallet saved to:', clientPath);
+console.log('  Address:', clientData.address);
 
 console.log('\n╔════════════════════════════════════════════════════════════╗');
-console.log('║   DENARNICE USPEŠNO USTVARJENE!                           ║');
+console.log('║   WALLETS CREATED SUCCESSFULLY!                           ║');
 console.log('╚════════════════════════════════════════════════════════════╝\n');
 
-console.log('⚠️  POMEMBNO - Shrani varno:');
-console.log('   - Merchant naslov:', merchantData.address);
-console.log('   - Klient naslov:', clientData.address);
+console.log('⚠️  IMPORTANT - Store these safely:');
+console.log('   - Merchant address:', merchantData.address);
+console.log('   - Client address:', clientData.address);
 console.log('');
-console.log('📝 NASLEDNJI KORAKI:');
-console.log('   1. Pojdi na Sepolia faucet: https://sepoliafaucet.com');
-console.log('   2. Naloži klient denarnico z testnet ETH');
-console.log('   3. Počakaj ~1 minuto da se ETH pojavi');
-console.log('   4. Preveri balance na: https://sepolia.etherscan.io');
+console.log('📝 NEXT STEPS:');
+console.log('   1. Go to the Sepolia faucet: https://sepoliafaucet.com');
+console.log('   2. Fund the client wallet with testnet ETH');
+console.log('   3. Wait ~1 minute for the ETH to appear');
+console.log('   4. Check the balance at: https://sepolia.etherscan.io');
 console.log('');
-console.log('💰 Koliko ETH potrebuješ:');
-console.log('   - Klient: ~0.01 ETH (za transakcije + gas)');
-console.log('   - Merchant: 0 ETH (samo prejema plačila)');
+console.log('💰 How much ETH you need:');
+console.log('   - Client: ~0.01 ETH (for transactions + gas)');
+console.log('   - Merchant: 0 ETH (only receives payments)');
 console.log('');

@@ -2,34 +2,34 @@
 
 /**
  * ============================================================================
- *  SQLite knjiga POSREDNIKA (mapa 04_spletisce_posrednik/posrednik)
+ *  The FACILITATOR's SQLite ledger (folder 04_website_facilitator/facilitator)
  * ============================================================================
  *
- *  V topologiji (b) plačilno stanje NE živi pri trgovcu, ampak pri posredniku.
- *  Ta modul je zato knjiga posrednika:
+ *  In topology (b) the payment state does NOT live with the merchant but with
+ *  the facilitator. This module is therefore the facilitator's ledger:
  *
- *    payment_requests   plačilne zahteve, ki jih odpre trgovec (POST /payment-request)
- *    payment_proofs     dokazni žetoni, ki jih posrednik izda plačniku (POST /submit-payment)
- *    redeemed_tx_hashes že unovčene transakcije (ena transakcija = eno dokazilo)
- *    sessions           predplačniške merjene seje (dobroimetje, proračun, veljavnost)
- *    session_events     polnitve in bremenitve; `nonce` je UNIQUE → zaščita pred ponovitvijo
+ *    payment_requests   payment requests opened by the merchant (POST /payment-request)
+ *    payment_proofs     proof tokens the facilitator issues to the payer (POST /submit-payment)
+ *    redeemed_tx_hashes already-redeemed transactions (one transaction = one proof)
+ *    sessions           prepaid metered sessions (credit, budget, validity)
+ *    session_events     top-ups and debits; `nonce` is UNIQUE → replay protection
  *
- *  Shema je namenoma ENAKA kot v neposredni izvedbi (mapa 05_spletisce), da
- *  se arhitekturi razlikujeta SAMO v topologiji in ne tudi v načinu hrambe —
- *  prav to je omejitev zgodnejše primerjave (dve različni kodni bazi), ki jo
- *  ta mapa odpravlja.
+ *  The schema is deliberately IDENTICAL to the direct implementation (folder
+ *  05_website_direct), so that the two architectures differ ONLY in topology and
+ *  not also in how state is stored — precisely the limitation of the earlier
+ *  comparison (two different codebases) that this folder removes.
  *
- *  Razlike proti mapi 05:
- *   - ni tabel `sessions_web` / `sessions_web_links`: korelacija seje brskalnika
- *     je skrb trgovca (piškotek `sid`), ne posrednika. Posrednik brskalnika
- *     sploh ne vidi.
- *   - `amount_wei` namesto `amount_eth`: zneski se primerjajo izključno kot
- *     celoštevilski wei (BigInt). Stara izvedba posrednika
- *     (`experiments/legacy/.../facilitator.js`) je primerjala `parseFloat` —
- *     to je napaka št. 3 od petih, popravljenih v tej mapi.
- *   - `merchant` v plačilni zahtevi: posrednik je storitev za VEČ trgovcev,
- *     zato prejemnika preverja proti `payment_requests.recipient` in ne proti
- *     eni sami globalni denarnici.
+ *  Differences vs folder 05:
+ *   - no `sessions_web` / `sessions_web_links` tables: correlating the browser
+ *     session is the merchant's concern (the `sid` cookie), not the facilitator's.
+ *     The facilitator never sees the browser at all.
+ *   - `amount_wei` instead of `amount_eth`: amounts are compared exclusively as
+ *     integer wei (BigInt). The old facilitator implementation
+ *     (`experiments/legacy/.../facilitator.js`) compared with `parseFloat` —
+ *     that is bug no. 3 of the five fixed in this folder.
+ *   - `merchant` on the payment request: the facilitator is a service for
+ *     MULTIPLE merchants, so it checks the recipient against
+ *     `payment_requests.recipient` and not against one single global wallet.
  * ============================================================================
  */
 
@@ -40,7 +40,7 @@ const path = require('path');
 const DATA_DIR = path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const db = new Database(process.env.DB_PATH || path.join(DATA_DIR, 'posrednik.db'));
+const db = new Database(process.env.DB_PATH || path.join(DATA_DIR, 'facilitator.db'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
@@ -95,7 +95,7 @@ const S = {
   health: db.prepare('SELECT 1 AS ok')
 };
 
-// ── plačilne zahteve in dokazila (enkratno + po transakciji) ─────────────────
+// ── payment requests and proofs (one-time + per transaction) ────────────────
 function createPaymentRequest(a) {
   const now = Date.now();
   S.insReq.run(a.requestId, a.merchant, a.resource, a.recipient, BigInt(a.amountWei).toString(),
@@ -108,10 +108,11 @@ function getPaymentRequest(id) {
   return r;
 }
 
-// Unovčenje transakcije in izdaja dokazila sta ENA transakcija baze: `redeemed_tx_hashes`
-// ima PRIMARY KEY na `tx_hash`, zato druga hkratna prijava iste transakcije pade na
-// omejitvi in dokazilo se ne izda. To je popravek napake št. 2 stare izvedbe
-// (ena transakcija je tam lahko zadostila poljubno mnogo različnim `requestId`).
+// Redeeming the transaction and issuing the proof are ONE database transaction:
+// `redeemed_tx_hashes` has a PRIMARY KEY on `tx_hash`, so a second concurrent submission
+// of the same transaction fails on the constraint and no proof is issued. This fixes
+// bug no. 2 of the old implementation (there, one transaction could satisfy arbitrarily
+// many different `requestId`s).
 const issueProof = db.transaction((a) => {
   S.redeem.run(a.txHash, a.requestId, Date.now());
   const now = Date.now();
@@ -125,13 +126,13 @@ function getProof(t) {
   if (r.expires_at < Date.now()) return null;
   return r;
 }
-// Enkratna poraba: pogoj `consumed_at IS NULL` je v SQL, zato dve hkratni zahtevi
-// z istim žetonom ne moreta obe uspeti. Popravek napake št. 1 stare izvedbe, kjer
-// je bil `/verify-proof` zgolj branje in je en žeton veljal neomejeno.
+// Single-use consumption: the `consumed_at IS NULL` condition is in the SQL, so two
+// concurrent requests with the same token cannot both succeed. Fixes bug no. 1 of the
+// old implementation, where `/verify-proof` was read-only and one token was valid indefinitely.
 function consumeProof(t) { return S.consumeProof.run(Date.now(), t).changes === 1; }
 function isTxRedeemed(t) { return !!S.isRedeemed.get(t); }
 
-// ── merjene seje ─────────────────────────────────────────────────────────────
+// ── metered sessions ─────────────────────────────────────────────────────────
 function getSession(id) { return S.getSession.get(id); }
 const openSession = db.transaction(({ sessionId, merchant, payerAddress, resource, recipient, depositWei, budgetWei, txHash, ttlSeconds }) => {
   S.redeem.run(txHash, sessionId, Date.now());

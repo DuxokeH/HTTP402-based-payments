@@ -1,4 +1,4 @@
 {
-  "_opomba": "x402 v2 facilitator (testna ETH konfiguracija — poravnava sintetična/mock): poravnalni ključ posrednika (Ethereum Sepolia ETH za gas). V mock načinu ni potreben; pravi tek bi zahteval EIP-3009 žeton (npr. USDC/EURC). Kopiraj v wallet.json. NIKOLI ga ne deli in ne nalagaj v git. Lastni posredniški protokol te datoteke ne potrebuje — posrednik tam verigo samo BERE.",
+  "_note": "x402 v2 facilitator (test ETH configuration — settlement synthetic/mock): the facilitator's settlement key (Ethereum Sepolia). Not needed in mock mode.",
   "x402SettlerPrivateKey": ""
 }

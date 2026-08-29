@@ -1,332 +1,340 @@
-# 03 — Merjena predplačniška seja z dobroimetjem
+# 03 — Metered prepaid session with credit
 
-**Scenarij:** ista IoT postavitev kot mapa `02`, a agent izvede **eno samo on-chain polnitev
-(top-up)**, ki odpre **predplačniško sejo**, nato pa vsak odčitek plača s **kriptografskim
-podpisom EIP-191** — brez nove transakcije. **20 odčitkov = 1 transakcija + 20 podpisov.**
+**Scenario:** the same IoT setup as folder `02`, except that the agent performs **a single on-chain
+top-up** which opens a **prepaid session**, and from then on pays for every reading with an
+**EIP-191 cryptographic signature** — with no further transactions. **20 readings = 1 transaction
++ 20 signatures.**
 
-Mapa `02` je namenoma draga osnova (kumulativni gas raste linearno z N). Ta mapa je njeno
-nasprotje: strošek verige je konstanten, ne glede na število odčitkov. Skupaj tvorita ključno
-primerjavo, ki jo združi `../primerjava/`.
+Folder `02` is deliberately an expensive baseline (cumulative gas grows linearly with N). This
+folder is its opposite: the chain cost is constant, no matter how many readings are taken.
+Together the two form the key comparison that `../comparison/` brings together.
 
-## Kaj poskus meri
+## What the experiment measures
 
-Za vsako podpisano bremenitev se izmeri:
+For every signed debit the following are measured:
 
-- `t_podpis_ms` — čas izdelave podpisa EIP-191 pri odjemalcu,
-- `t_zahteva_ms` — čas omrežja in strežnika (HTTP krožna pot),
-- `streznik_ms` — čas obdelave na strani naprave (glava `X-Server-Ms`),
-- `cena_wei` — zaračunana cena (glava `X-Charged-Wei`),
-- `dobroimetje_wei` in `proracun_ostanek_wei` — preostanek dobroimetja in proračuna po bremenitvi.
+- `t_sign_ms` — time to produce the EIP-191 signature on the client,
+- `t_request_ms` — network and server time (the HTTP round trip),
+- `server_ms` — processing time on the device side (the `X-Server-Ms` header),
+- `price_wei` — the price charged (the `X-Charged-Wei` header),
+- `credit_wei` and `budget_remaining_wei` — the credit and budget left after the debit.
 
-Prva vrstica meritve je **polnitev** — edina vrstica, ki lahko nosi `gas_enote` in
-`provizija_eth`; izpolnjena sta samo v realnem načinu, v mock načinu ostaneta prazna.
-Poudarek poskusa: **on-chain transakcija je natanko ena**, latenca posamezne bremenitve pa ne
-vsebuje čakanja na potrditev na verigi (dejanske vrednosti so odvisne od strojne opreme in
-omrežja — izmeriš jih z zagonom).
+The first row of the measurements is the **top-up** — the only row that can carry `gas_units` and
+`fee_eth`; both are filled in only in real mode and stay empty in mock mode.
+The point of the experiment: **there is exactly one on-chain transaction**, and the latency of an
+individual debit contains no waiting for on-chain confirmation (the actual values depend on your
+hardware and network — measure them by running it yourself).
 
-Seja izpolnjuje tri zahteve — omejeno dobroimetje, proračun in čas veljavnosti:
+The session enforces three constraints — limited credit, a budget and a validity window:
 
-| Zahteva | V kodi |
+| Constraint | In the code |
 |---|---|
-| omejeno **dobroimetje** | `deposit_wei` (preostanek = `deposit − spent`) |
-| **proračun** | `budget_wei` (poraba ga nikoli ne sme preseči) |
-| **čas veljavnosti** | `expires_at` (bremenitve po poteku so zavrnjene) |
+| limited **credit** | `deposit_wei` (remaining = `deposit − spent`) |
+| **budget** | `budget_wei` (spending must never exceed it) |
+| **validity window** | `expires_at` (debits after expiry are rejected) |
 
-Podpisano sporočilo veže vse elemente skupaj:
+The signed message binds all the elements together:
 
 ```
 x402-debit:{payer}:{session}:{nonce}:{path}:{maxWei}
 ```
 
-Nedvoumno povezuje plačnika, sejo, enkratno kodo (nonce), vir in cenovno mejo. Zahteva nosi
-glave `X-Payer`, `X-Session`, `X-Nonce`, `X-Signature` in `X-Max-Wei`; odgovor vrne
-`X-Charged-Wei`, `X-Balance-Wei`, `X-Budget-Remaining-Wei`, `X-Session-Expires`,
-`X-Server-Ms` in `X-Request-Id`. Glavo `X-Chain-Read-Ms` (čas branja verige) doda samo odgovor
-na `POST /session/open`, in še to le v realnem načinu, ko se polnitev res preveri prek RPC.
+It unambiguously ties together the payer, the session, the one-time code (nonce), the resource and
+the price ceiling. The request carries the headers `X-Payer`, `X-Session`, `X-Nonce`,
+`X-Signature` and `X-Max-Wei`; the response returns `X-Charged-Wei`, `X-Balance-Wei`,
+`X-Budget-Remaining-Wei`, `X-Session-Expires`, `X-Server-Ms` and `X-Request-Id`. The
+`X-Chain-Read-Ms` header (chain read time) is added only by the response to
+`POST /session/open`, and even then only in real mode, when the top-up really is verified over RPC.
 
-## Zahteve
+## Requirements
 
-- **Node.js ≥ 20** in **npm** (za `iot_naprava/` in `agent/`).
-- **Python ≥ 3.9** za analizo (`matplotlib`, `pandas`, `numpy`).
-- Za **realni način**: financirana denarnica na omrežju **Ethereum Sepolia** z nekaj testnega ETH
-  (iz javnega faucet-a). Potrebna je le za **eno** polnitev in njen gas — bremenitve so brezplačne.
-- Za zajem prometa v Wiresharku: dostop do vmesnika, po katerem teče HTTP promet (glej
+- **Node.js ≥ 20** and **npm** (for `iot_device/` and `agent/`).
+- **Python ≥ 3.9** for the analysis (`matplotlib`, `pandas`, `numpy`).
+- For **real mode**: a funded wallet on the **Ethereum Sepolia** network with some test ETH (from a
+  public faucet). It is needed only for the **single** top-up and its gas — the debits are free.
+- For capturing traffic in Wireshark: access to the interface the HTTP traffic flows over (see
   `../README.md`).
 
-Repozitorij **ne vsebuje nobenih zasebnih ključev ali poverilnic** — denarnice si ustvariš sam.
+The repository **contains no private keys or credentials whatsoever** — you create the wallets
+yourself.
 
-## Struktura mape
+## Folder structure
 
 ```
-iot_naprava/   Express IoT ponudnik s sejami (vrata 3200)
+iot_device/    Express IoT provider with sessions (port 3200)
                server.js, auth.js, db.js, db_x402.js, x402.js,
                .env.example, wallet.example.json
-agent/         agent.js (1 polnitev + N podpisanih bremenitev, varnostni testi),
-               x402-odjemalec.js, generate-wallet.js, config.json, wallet.example.json
-analiza/       analiza_dobroimetje.py, slog.py, requirements.txt
-meritve/       izhodni CSV in povzetki JSON — mapo skripte ustvarijo same
+agent/         agent.js (1 top-up + N signed debits, security tests),
+               x402-client.js, generate-wallet.js, config.json, wallet.example.json
+analysis/      credit_analysis.py, style.py, requirements.txt
+measurements/  output CSVs and JSON summaries — the scripts create the folder themselves
 ```
 
-Mapa `meritve/` je v repozitoriju prazna in je po `git clone` ne bo; agent jo ustvari ob prvem
-zagonu. Enako velja za `analiza/slike/`, ki jo ustvari skripta za analizo. Rezultati
-(`meritve/*.csv`, `meritve/*_povzetek.json`) in slike so v korenskem `.gitignore` in v git ne
-pridejo. Izjema so simulirani vzorci v `meritve/_vzorec/` — teh `.gitignore` ne pokriva, zato
-jih, če si jih ustvaril, ne dodajaj v git.
+The `measurements/` folder is empty in the repository and will not be there after `git clone`; the
+agent creates it on its first run. The same goes for `analysis/figures/`, which the analysis script
+creates. The results (`measurements/*.csv`, `measurements/*_summary.json`) and the figures are
+listed in the root `.gitignore` and never reach git. The exception is the simulated samples in
+`measurements/_sample/` — `.gitignore` does not cover those, so if you have generated them, do not
+add them to git.
 
-## Namestitev
+## Installation
 
 ```bash
-cd iot_naprava
-npm ci                                  # oz. npm install
-cp wallet.example.json wallet.json      # OBVEZNO — brez tega se strežnik takoj ustavi
-cp .env.example .env                    # neobvezno; vrednosti so enake privzetkom v kodi
-                                        # (izjema: LOG_LEVEL, v kodi `debug`, v .env `info`)
+cd iot_device
+npm ci                                  # or npm install
+cp wallet.example.json wallet.json      # MANDATORY — without it the server stops immediately
+cp .env.example .env                    # optional; the values match the defaults in the code
+                                        # (exception: LOG_LEVEL, `debug` in the code, `info` in .env)
 ```
 
-V `iot_naprava/wallet.json` vpiši **samo naslov** denarnice, ki naj prejema polnitve (ista vloga
-kot v mapi `02`). Privatni ključ tu ni potreben in ga ne vpisuj.
+In `iot_device/wallet.json` enter **only the address** of the wallet that is to receive the top-ups
+(the same role as in folder `02`). No private key is needed here, so do not enter one.
 
 ```bash
 cd ../agent
 npm ci
 ```
 
-Za **realni način** potrebuje agent plačnikovo denarnico z zasebnim ključem:
+For **real mode** the agent needs the payer's wallet, private key included:
 
 ```bash
 cd agent
-npm run gen-wallet         # ustvari agent/wallet.json (obstoječe ne prepiše)
+npm run gen-wallet         # creates agent/wallet.json (never overwrites an existing one)
 ```
 
-Naslov iz `agent/wallet.json` nato financiraj iz javnega faucet-a za Sepolio. V **mock** načinu
-denarnica ni potrebna — agent podpisuje z efemerno denarnico brez sredstev.
+Then fund the address from `agent/wallet.json` from a public Sepolia faucet. In **mock** mode no
+wallet is needed — the agent signs with an ephemeral wallet that holds no funds.
 
-## Lokalni zagon — mock (brez sredstev)
+## Local run — mock (no funds)
 
-Naprava je zaprta s **skrbniško prijavo** (glej `../README.md`). Poverilnice se ustvarijo ob
-**prvem** zagonu in se shranijo v `iot_naprava/data/admin.json`; berljiv izvod se ob vsakem
-zagonu osveži v `iot_naprava/data/admin-credentials.txt` (pravice 0600), zato žeton preberi
-**po** zagonu strežnika. Ob ponovnih zagonih se žeton in geslo **ne** spremenita — nov par
-dobiš tako, da izbrišeš `data/admin.json` in strežnik znova zaženeš.
+The device is protected by an **admin login** (see `../README.md`). The credentials are generated on
+the **first** run and stored in `iot_device/data/admin.json`; a human-readable copy is refreshed on
+every start in `iot_device/data/admin-credentials.txt` (permissions 0600), so read the token
+**after** the server has started. The token and password do **not** change on subsequent runs — to
+get a new pair, delete `data/admin.json` and restart the server.
 
-**Terminal 1 — IoT naprava:**
+**Terminal 1 — IoT device:**
 
 ```bash
-cd iot_naprava
+cd iot_device
 npm run mock          # NODE_ENV=development MOCK_VERIFY=true node server.js
 ```
 
-Naprava posluša na vratih **3200** (`IOT_PORT`), na vseh vmesnikih.
+The device listens on port **3200** (`IOT_PORT`), on all interfaces.
 
 **Terminal 2 — agent:**
 
 ```bash
 cd agent
-export ADMIN_TOKEN=$(grep '^ZETON=' ../iot_naprava/data/admin-credentials.txt | cut -d= -f2)
+export ADMIN_TOKEN=$(grep '^TOKEN=' ../iot_device/data/admin-credentials.txt | cut -d= -f2)
 npm run mock          # node agent.js --mock --debits 20
 ```
 
-Nastane `meritve/dobroimetje_mock.csv` in `meritve/dobroimetje_mock_povzetek.json`.
+This produces `measurements/credit_mock.csv` and `measurements/credit_mock_summary.json`.
 
-V mock načinu je polog seje fiksno `PRICE_WEI_PER_CALL × 25`, torej **največ 25 bremenitev**;
-z `--debits 30` bi zadnjih pet vrnilo `402 insufficient_balance`. Zastavica `--topup-wei` v
-mock načinu nima učinka (uporabi se le za resnično transakcijo v realnem načinu).
+In mock mode the session deposit is fixed at `PRICE_WEI_PER_CALL × 25`, i.e. **at most 25 debits**;
+with `--debits 30` the last five would return `402 insufficient_balance`. The `--topup-wei` flag has
+no effect in mock mode (it is only used for the actual transaction in real mode).
 
-V brskalniku se lahko prijaviš na `http://127.0.0.1:3200/prijava` (uporabniško ime in geslo sta
-v isti datoteki, polji `UPORABNIK=` in `GESLO=`) in pogledaš npr. `/config`. Odprto geslo je v
-polju `GESLO=` zapisano samo ob zagonu, ki ga je ustvaril; pri kasnejših zagonih je tam le
-opomba, da je nespremenjeno. Brez žetona agent takoj javi `401` in izpiše točen ukaz za `grep`.
+In a browser you can log in at `http://127.0.0.1:3200/login` (the username and password are in the
+same file, in the `USERNAME=` and `PASSWORD=` fields) and inspect, for example, `/config`. The
+plaintext password is written into the `PASSWORD=` field only on the run that created it; on later
+runs there is just a note saying it is unchanged. Without a token the agent immediately reports
+`401` and prints the exact `grep` command to use.
 
-## Lokalni zagon — realne meritve (Sepolia)
+## Local run — real measurements (Sepolia)
 
-Predpogoj: `agent/wallet.json` s financirano denarnico in `iot_naprava/wallet.json` z naslovom
-prejemnika. V `iot_naprava/.env` naj bo `MOCK_VERIFY=false` (privzetek v `.env.example`).
+Prerequisites: `agent/wallet.json` with a funded wallet, and `iot_device/wallet.json` with the
+recipient address. In `iot_device/.env` set `MOCK_VERIFY=false` (the default in `.env.example`).
 
 **Terminal 1:**
 
 ```bash
-cd iot_naprava
-npm start             # node server.js — polnitev se preveri na verigi prek RPC_URL
+cd iot_device
+npm start             # node server.js — the top-up is verified on chain via RPC_URL
 ```
 
 **Terminal 2:**
 
 ```bash
 cd agent
-export ADMIN_TOKEN=$(grep '^ZETON=' ../iot_naprava/data/admin-credentials.txt | cut -d= -f2)
+export ADMIN_TOKEN=$(grep '^TOKEN=' ../iot_device/data/admin-credentials.txt | cut -d= -f2)
 npm run real          # node agent.js --real --debits 20 --pause-ms 200
 ```
 
-Nastane `meritve/dobroimetje_real.csv` in `meritve/dobroimetje_real_povzetek.json`.
+This produces `measurements/credit_real.csv` and `measurements/credit_real_summary.json`.
 
-Privzeta polnitev je `--topup-wei 2500000000000` (0.0000025 ETH), kar pri ceni
-`100000000000 wei` na odčitek zadošča za **natanko 25 bremenitev**. Za več bremenitev polnitev
-sorazmerno dvigni, sicer strežnik zavrne z `402 insufficient_balance`:
+The default top-up is `--topup-wei 2500000000000` (0.0000025 ETH), which at a price of
+`100000000000 wei` per reading is enough for **exactly 25 debits**. For more debits, raise the
+top-up proportionally, otherwise the server rejects them with `402 insufficient_balance`:
 
 ```bash
 node agent.js --real --debits 40 --pause-ms 200 --topup-wei 5000000000000
 ```
 
-Zastavice, ki jih agent bere: `--real` (sicer mock), `--debits <N>` (privzeto 20),
-`--pause-ms <ms>` (privzeto 0), `--topup-wei <wei>`, `--security`, `--x402`, `--out <pot>`.
+The flags the agent reads: `--real` (mock otherwise), `--debits <N>` (default 20),
+`--pause-ms <ms>` (default 0), `--topup-wei <wei>`, `--security`, `--x402`, `--out <path>`.
 
-## Zagon na oddaljenem strežniku
+## Running on a remote server
 
-Postavitev: **IoT naprava teče na strežniku**, **agent lokalno** (tako gre plačilni promet čez
-omrežje in ga je mogoče zajeti z Wiresharkom). Podrobnosti so v `../README.md`.
+The setup: **the IoT device runs on the server**, **the agent runs locally** (that way the payment
+traffic crosses the network and can be captured with Wireshark). Details are in `../README.md`.
 
 ```bash
-ssh <UPORABNIK>@<IP_STREZNIKA>
-git clone <URL_REPOZITORIJA>
-cd HTTP402-based-payments/testna-okolja/03_avtomatska_placila_dobroimetje/iot_naprava
+ssh <USER>@<SERVER_IP>
+git clone <REPO_URL>
+cd HTTP402-based-payments/test-environments/03_machine_payments_prepaid/iot_device
 npm ci
-cp wallet.example.json wallet.json     # vpiši naslov prejemnika
+cp wallet.example.json wallet.json     # enter the recipient address
 cp .env.example .env
-sudo ufw allow 3200/tcp                # odpri vrata naprave
-npm run mock                           # ali npm start za realni način
+sudo ufw allow 3200/tcp                # open the device port
+npm run mock                           # or npm start for real mode
 ```
 
-Nato **lokalno** poženi agenta in ga usmeri na strežnik z okoljsko spremenljivko `IOT_URL`
-(prednost ima pred `agent/config.json`); žeton preberi na strežniku:
+Then run the agent **locally** and point it at the server with the `IOT_URL` environment variable
+(which takes precedence over `agent/config.json`); read the token on the server:
 
 ```bash
-# na strežniku:
-grep '^ZETON=' iot_naprava/data/admin-credentials.txt | cut -d= -f2
+# on the server:
+grep '^TOKEN=' iot_device/data/admin-credentials.txt | cut -d= -f2
 
-# lokalno:
+# locally:
 cd agent
-export IOT_URL=http://<IP_STREZNIKA>:3200
-export ADMIN_TOKEN=<ZETON_S_STREZNIKA>
+export IOT_URL=http://<SERVER_IP>:3200
+export ADMIN_TOKEN=<TOKEN_FROM_SERVER>
 npm run mock
 ```
 
-Ta mapa nima Dockerfile-a ne Caddyfile-a — naprava se zaganja neposredno z `npm`.
-Vsebnikirano različico s HTTPS imata mapi `04` in `05`.
+This folder has neither a Dockerfile nor a Caddyfile — the device is started directly with `npm`.
+For a containerised variant with HTTPS, see folders `04` and `05`.
 
-> **Opozorilo:** naprava namenoma teče po **navadnem HTTP** (brez TLS), da je plačilni tok viden
-> v Wiresharku. Dostop do vrat 3200 omeji na svoj IP (npr. `sudo ufw allow from <TVOJ_IP> to any
-> port 3200 proto tcp`), strežnik po meritvah ustavi in vrata zapri. Skrbniški žeton in geslo se
-> po HTTP prenašata v čistopisu in ostaneta ista tudi po ponovnem zagonu, zato ju po meritvah
-> zavrzi: izbriši `data/admin.json` in `data/admin-credentials.txt`.
+> **Warning:** the device deliberately runs over **plain HTTP** (no TLS) so that the payment flow is
+> visible in Wireshark. Restrict access to port 3200 to your own IP (e.g. `sudo ufw allow from
+> <YOUR_IP> to any port 3200 proto tcp`), and once the measurements are done, stop the server and
+> close the port. The admin token and password travel over HTTP in the clear and stay the same
+> across restarts, so discard them after measuring: delete `data/admin.json` and
+> `data/admin-credentials.txt`.
 
-## Analiza rezultatov
+## Results analysis
 
 ```bash
-cd analiza
+cd analysis
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python3 analiza_dobroimetje.py
+python3 credit_analysis.py
 ```
 
-Brez argumenta skripta poišče prvo obstoječo datoteko po vrstnem redu
-`../meritve/dobroimetje_real.csv`, `../meritve/dobroimetje_mock.csv`, nato še različici v
-`../meritve/_vzorec/`. Datoteko lahko podaš tudi izrecno:
+With no argument, the script looks for the first file that exists, in the order
+`../measurements/credit_real.csv`, `../measurements/credit_mock.csv`, then the same two variants in
+`../measurements/_sample/`. You can also name the file explicitly:
 
 ```bash
-python3 analiza_dobroimetje.py ../meritve/dobroimetje_real.csv
-python3 analiza_dobroimetje.py --out /pot/do/slik --vzorec
+python3 credit_analysis.py ../measurements/credit_real.csv
+python3 credit_analysis.py --out /path/to/figures --sample
 ```
 
-`--out` določa ciljno mapo (privzeto `analiza/slike`), `--vzorec` doda čez sliko rdeč diagonalni
-vodni žig „SIMULIRANI PRIMER — NE PRAVE MERITVE". Če meritve še ne obstajajo, si lahko
-simulirane vhodne CSV ustvariš z `../primerjava/generiraj_vzorec.py`, ki jih zapiše v
-`meritve/_vzorec/`; nastale slike so takrat samodejno označene kot vzorec in **niso** rezultat
-meritve.
+`--out` sets the target folder (default `analysis/figures`), and `--sample` stamps a red diagonal
+watermark reading "SIMULATED EXAMPLE — NOT REAL MEASUREMENTS" across the figure. If you have no
+measurements yet, you can generate simulated input CSVs with `../comparison/generate_sample.py`,
+which writes them into `measurements/_sample/`; the resulting figures are then marked as samples
+automatically and are **not** the result of a measurement.
 
-Skripta `analiza_dobroimetje.py` obdela samo vrstice z `vrsta=debit` in bere stolpce domačega
-toka (`t_podpis_ms`, `t_zahteva_ms`, `streznik_ms`, `cena_wei`, `dobroimetje_wei`,
-`proracun_ostanek_wei`, `nacin`). Datotek `x402_dobroimetje_*.csv` ne obdela (imajo atomske
-stolpce namesto wei) — te obdela `../primerjava/primerjava_x402.py`. Za združeno primerjavo z
-mapo `02` (amortizacija, latenca on/off-chain) glej `../primerjava/`.
+The `credit_analysis.py` script processes only the rows with `kind=debit` and reads the columns of
+the native flow (`t_sign_ms`, `t_request_ms`, `server_ms`, `price_wei`, `credit_wei`,
+`budget_remaining_wei`, `mode`). It does not process the `x402_dobroimetje_*.csv` files (they carry
+atomic-unit columns instead of wei) — those are handled by `../comparison/comparison_x402.py`. For
+the combined comparison with folder `02` (amortisation, on/off-chain latency), see
+`../comparison/`.
 
-Opomba: `analiza/slog.py` je namerno podvojen v vsaki mapi `analiza/`, da je vsaka mapa
-samostojna.
+Note: `analysis/style.py` is duplicated in every `analysis/` folder on purpose, so that each folder
+stands on its own.
 
-## Pričakovani izhodi
+## Expected outputs
 
-V `meritve/`:
+In `measurements/`:
 
-| Datoteka | Nastane pri |
+| File | Produced by |
 |---|---|
-| `dobroimetje_mock.csv` + `dobroimetje_mock_povzetek.json` | `npm run mock` (agent) |
-| `dobroimetje_real.csv` + `dobroimetje_real_povzetek.json` | `npm run real` |
-| `varnostni_testi_mock.csv` | `npm run security` |
+| `credit_mock.csv` + `credit_mock_summary.json` | `npm run mock` (agent) |
+| `credit_real.csv` + `credit_real_summary.json` | `npm run real` |
+| `security_tests_mock.csv` | `npm run security` |
 | `x402_dobroimetje_mock.csv` / `_real.csv` | `node agent.js --x402` |
-| `varnostni_testi_x402_mock.csv` | `node agent.js --x402 --security` |
+| `security_tests_x402_mock.csv` | `node agent.js --x402 --security` |
 
-CSV domačega toka ima 17 stolpcev: `dogodek, cas_iso, nacin, vrsta, t_podpis_ms, t_zahteva_ms,
-streznik_ms, t_skupaj_ms, cena_wei, dobroimetje_wei, proracun_ostanek_wei, gas_enote,
-provizija_eth, temperatura_c, vlaga_pct, nonce, seja`. Prva vrstica je `polnitev` (`topup`),
-sledijo `bremenitev_1 … bremenitev_N` z `vrsta=debit`.
-CSV varnostnih testov ima stolpce `test, pricakovano, dejansko, uspeh, opomba`; v `uspeh` piše
-domača zbirka `da`/`ne`, zbirka za x402 pa `1`/`0`.
+The native-flow CSV has 17 columns: `event, timestamp_iso, mode, kind, t_sign_ms, t_request_ms,
+server_ms, t_total_ms, price_wei, credit_wei, budget_remaining_wei, gas_units,
+fee_eth, temperature_c, humidity_pct, nonce, session`. The first row is the top-up (`topup`),
+followed by `debit_1 … debit_N` with `kind=debit`.
+The security-test CSV has the columns `test, expected, actual, passed, note`; in `passed` the native
+suite writes `da`/`ne`, while the x402 suite writes `1`/`0`.
 
-V `analiza/slike/`:
+In `analysis/figures/`:
 
-- `01_latenca_bremenitve.png` — latenca posamezne bremenitve (podpis + zahteva) z mediano,
-- `02_poraba_dobroimetja.png` — upadanje dobroimetja skozi sejo. Krivulja preostalega proračuna
-  se nariše le, kadar se od dobroimetja razlikuje; pri privzetem zagonu je proračun enak pologu,
-  zato je krivulja ena sama (ločen proračun uporabljata varnostna testa T7 in T9).
+- `01_debit_latency.png` — the latency of an individual debit (signature + request) with the median,
+- `02_credit_consumption.png` — how the credit drains over the session. The remaining-budget curve
+  is only drawn when it differs from the credit; on a default run the budget equals the deposit, so
+  there is a single curve (a separate budget is used by security tests T7 and T9).
 
-**Signal uspeha:** agent ob odprtju seje izpiše njeno oznako (`seja=sess_…`), ob koncu pa
-vrstico `uspešnih N/N`, povzetek latenc (`t_podpis`, `t_zahteva`) in končno stanje seje,
-skripta za analizo pa vrstici `Latenca bremenitve [ms]: min=… median=…` in
-`On-chain transakcij v seji: 1 (polnitev) za N odčitkov`, ter na koncu `Končano.`
+**Success signal:** on opening the session the agent prints its identifier (`session=sess_…`), and
+at the end a line reading `N/N succeeded`, a latency summary (`t_sign`, `t_request`) and the final
+session state; the analysis script prints the lines `Debit latency [ms]: min=… median=…` and
+`On-chain transactions in the session: 1 (top-up) for N readings`, and finally `Done.`
 
-## Varnostni testi
+## Security tests
 
-Preverjajo zaščitne mehanizme seje. Tečejo **samo v mock načinu** — z `--real` se
-zavrnejo:
+These check the session's protection mechanisms. They run **in mock mode only** — with `--real` they
+refuse to run:
 
 ```bash
 cd agent
-export ADMIN_TOKEN=$(grep '^ZETON=' ../iot_naprava/data/admin-credentials.txt | cut -d= -f2)
+export ADMIN_TOKEN=$(grep '^TOKEN=' ../iot_device/data/admin-credentials.txt | cut -d= -f2)
 npm run security          # node agent.js --security
 ```
 
-Izvede se **9 testov**:
+**9 tests** are run:
 
-| # | Test | Pričakovano |
+| # | Test | Expected |
 |---|---|---|
-| T1 | manjkajoče podpisne glave | `402` |
-| T2 | veljavna bremenitev | `200` |
-| T3 | ponovitev nonce (replay) | `403` |
-| T4 | ponarejen podpis (druga denarnica) | `403` |
-| T5 | cena čez podpisani maksimum `X-Max-Wei` | `400` |
-| T6 | zastarel nonce (izven `DEBIT_MAX_AGE_MS`) | `400` |
-| T7 | presežen proračun (`budgetWei = 2 × cena`) | `402` |
-| T8 | nezadostno dobroimetje (polog `2 × cena`) | `402` |
-| T9 | potekla seja (`ttlSeconds: 1`) | `403` |
+| T1 | missing signature headers | `402` |
+| T2 | valid debit | `200` |
+| T3 | nonce reuse (replay) | `403` |
+| T4 | forged signature (a different wallet) | `403` |
+| T5 | price above the signed maximum `X-Max-Wei` | `400` |
+| T6 | stale nonce (outside `DEBIT_MAX_AGE_MS`) | `400` |
+| T7 | budget exceeded (`budgetWei = 2 × price`) | `402` |
+| T8 | insufficient credit (deposit of `2 × price`) | `402` |
+| T9 | expired session (`ttlSeconds: 1`) | `403` |
 
-Izhod: `meritve/varnostni_testi_mock.csv` (stolpec `uspeh` z vrednostma `da`/`ne`); v konzoli je
-izpisan števec uspešnih testov. Izhodno kodo, različno od 0, ob neuspehu nastavi le različica
-testov za x402 (`--x402 --security`), zato pri tej zbirki rezultat preveri v izpisu ali v CSV.
+Output: `measurements/security_tests_mock.csv` (the `passed` column holds `da`/`ne`); the console
+prints a count of the tests that passed. A non-zero exit code on failure is set only by the x402
+variant of the tests (`--x402 --security`), so for this suite check the result in the console output
+or in the CSV.
 
-## x402 v2 (vzporedni način — samo financiranje seje)
+## x402 v2 (parallel mode — session funding only)
 
-V tem načinu se protokol x402 uporabi **izključno za polnitev**: plačilo zahteve
-`POST /x402/session/open` (ena poravnava sheme *exact* v ETH) odpre sejo, vseh N bremenitev pa
-nato teče lokalno s podpisi EIP-191 v **sporočilu v2**:
+In this mode the x402 protocol is used **for the top-up only**: paying for the
+`POST /x402/session/open` request (a single settlement of the *exact* scheme in ETH) opens the
+session, and all N debits then run locally with EIP-191 signatures over the **v2 message**:
 
 ```
 metered-debit-v2:{payer}:{session}:{nonce}:{path}:{maxAtomic}:{network}:{asset}
 ```
 
-Glave so `X-Max-Atomic`, `X-Charged-Atomic`, `X-Balance-Atomic` in
-`X-Budget-Remaining-Atomic` — vrednosti so **atomske enote sredstva** (testni ETH), nikoli „wei".
-Za odčitke **ni nobene dodatne poravnave na verigi**. Podedovani tok in njegovo sporočilo
-`x402-debit:…:{maxWei}` sta nespremenjena; formata se vzajemno zavračata (test T3 spodaj).
-Lokalno merjenje samo po sebi **ni** x402 — pravilen opis je „x402 financiranje seje + lastno
-lokalno merjenje".
+The headers are `X-Max-Atomic`, `X-Charged-Atomic`, `X-Balance-Atomic` and
+`X-Budget-Remaining-Atomic` — the values are **atomic units of the asset** (test ETH), never "wei".
+The readings involve **no additional on-chain settlement at all**. The legacy flow and its
+`x402-debit:…:{maxWei}` message are unchanged; the two formats reject each other (test T3 below).
+Local metering is **not** x402 in itself — the accurate description is "x402 session funding + our
+own local metering".
 
-Poravnava je v tej konfiguraciji **sintetična (mock)**: pravi tek bi zahteval žeton s podporo
-EIP-3009, ki ga domači ETH nima.
+In this configuration the settlement is **synthetic (mock)**: a real run would require a token with
+EIP-3009 support, which native ETH does not have.
 
-**Terminal 1 — naprava z vklopljenim x402:**
+**Terminal 1 — device with x402 enabled:**
 
 ```bash
-cd iot_naprava
+cd iot_device
 X402_MODE=self X402_MOCK=true npm run mock
 ```
 
@@ -334,48 +342,48 @@ X402_MODE=self X402_MOCK=true npm run mock
 
 ```bash
 cd agent
-export ADMIN_TOKEN=$(grep '^ZETON=' ../iot_naprava/data/admin-credentials.txt | cut -d= -f2)
-node agent.js --x402 --debits 20      # → meritve/x402_dobroimetje_mock.csv
-node agent.js --x402 --security       # → meritve/varnostni_testi_x402_mock.csv
+export ADMIN_TOKEN=$(grep '^TOKEN=' ../iot_device/data/admin-credentials.txt | cut -d= -f2)
+node agent.js --x402 --debits 20      # → measurements/x402_dobroimetje_mock.csv
+node agent.js --x402 --security       # → measurements/security_tests_x402_mock.csv
 ```
 
-Varnostni testi x402 zahtevajo napravo, ki teče z **obema** spremenljivkama
-`X402_MODE=self` **in** `X402_MOCK=true` — sicer se takoj ustavijo. Izvedejo 9 testov:
-T1 polnitev odpre sejo; T2 pet bremenitev brez nove poravnave; T3 podpis v1 na poti v2 → `403`;
-T4 podpis v2 za drugo sredstvo → `403`; T5 ponovitev nonce → `403`; T6 cena nad maksimumom →
-`400`; T7 izčrpano dobroimetje → `402`; T8 ponovitev iste polnitve vrne isto sejo (idempotentno
-predvajanje); T9 pokvarjen JSON → `400`.
+The x402 security tests require a device running with **both** variables, `X402_MODE=self` **and**
+`X402_MOCK=true` — otherwise they stop immediately. They run 9 tests:
+T1 the top-up opens a session; T2 five debits with no further settlement; T3 a v1 signature on a v2
+path → `403`; T4 a v2 signature for a different asset → `403`; T5 nonce reuse → `403`; T6 price
+above the maximum → `400`; T7 credit exhausted → `402`; T8 replaying the same top-up returns the
+same session (idempotent replay); T9 malformed JSON → `400`.
 
-Privzeti polog x402 seje je `X402_SESSION_DEPOSIT_ATOMIC=2000000000000` = 20 plačil pri ceni
-`X402_PRICE_ATOMIC=100000000000`. Zbrane x402 meritve obdela `../primerjava/primerjava_x402.py`.
-Širši opis protokola je v `../README.md`.
+The default x402 session deposit is `X402_SESSION_DEPOSIT_ATOMIC=2000000000000` = 20 payments at a
+price of `X402_PRICE_ATOMIC=100000000000`. The collected x402 measurements are processed by
+`../comparison/comparison_x402.py`. A broader description of the protocol is in `../README.md`.
 
-## Prilagoditve
+## Customisation
 
-- **Cena na odčitek:** `PRICE_WEI_PER_CALL` (privzeto `100000000000` wei = 0.0000001 ETH —
-  enako kot v mapi `02`, kar omogoča neposredno primerjavo). Po želji še `PRICE_WEI_PER_BYTE`
-  (privzeto 0) in spodnja meja `MIN_PRICE_WEI`.
-- **Proračun in veljavnost seje:** agent ju lahko zahteva ob polnitvi (`budgetWei`,
-  `ttlSeconds`). Proračun strežnik omeji navzgor s pologom (privzeto je enak pologu), čas
-  veljavnosti pa s `SESSION_TTL_DEFAULT` (privzetek) in `SESSION_TTL_MAX` (zgornja meja).
-  To izkoriščata testa T7 in T9. Privzeti zagon agenta ne pošlje ne enega ne drugega.
-- **Svežina enkratne kode:** `DEBIT_MAX_AGE_MS` (privzeto 120000 ms).
-- Vse spremenljivke so opisane v `iot_naprava/.env.example`. Podatkovni bazi SQLite nastaneta v
-  `iot_naprava/data/` (`iot_dobroimetje.db`, `x402_placila.db`).
+- **Price per reading:** `PRICE_WEI_PER_CALL` (default `100000000000` wei = 0.0000001 ETH — the same
+  as in folder `02`, which makes a direct comparison possible). Optionally also
+  `PRICE_WEI_PER_BYTE` (default 0) and the floor `MIN_PRICE_WEI`.
+- **Session budget and validity:** the agent can request both at top-up time (`budgetWei`,
+  `ttlSeconds`). The server caps the budget at the deposit (by default it equals the deposit), and
+  the validity window at `SESSION_TTL_DEFAULT` (the default) and `SESSION_TTL_MAX` (the upper
+  limit). Tests T7 and T9 exploit this. A default agent run sends neither.
+- **Nonce freshness:** `DEBIT_MAX_AGE_MS` (default 120000 ms).
+- All the variables are documented in `iot_device/.env.example`. The two SQLite databases are
+  created in `iot_device/data/` (`iot_credit.db`, `x402_payments.db`).
 
-## Odpravljanje težav
+## Troubleshooting
 
-| Simptom | Vzrok in rešitev |
+| Symptom | Cause and fix |
 |---|---|
-| Strežnik se takoj ustavi | Manjka `iot_naprava/wallet.json` — `cp wallet.example.json wallet.json` in vpiši naslov. |
-| Agent javi `401` | Manjka ali napačen `ADMIN_TOKEN`. Preberi ga iz `data/admin-credentials.txt` na napravi; nov par dobiš z brisanjem `data/admin.json` in ponovnim zagonom. |
-| `402 insufficient_balance` | Polog ne pokrije vseh bremenitev: v mock načinu je meja 25, v realnem dvigni `--topup-wei`. |
-| Agent trka na `127.0.0.1` | Za oddaljeno napravo nastavi `export IOT_URL=http://<IP_STREZNIKA>:3200`. |
-| `Ni CSV. Najprej poženi meritev…` | Analiza ne najde vhodne datoteke — najprej `cd ../agent && npm run mock`. |
+| The server stops immediately | `iot_device/wallet.json` is missing — `cp wallet.example.json wallet.json` and enter the address. |
+| The agent reports `401` | `ADMIN_TOKEN` is missing or wrong. Read it from `data/admin-credentials.txt` on the device; for a new pair, delete `data/admin.json` and restart. |
+| `402 insufficient_balance` | The deposit does not cover all the debits: in mock mode the limit is 25; in real mode, raise `--topup-wei`. |
+| The agent connects to `127.0.0.1` | For a remote device, set `export IOT_URL=http://<SERVER_IP>:3200`. |
+| `No CSV found. Run a measurement first…` | The analysis cannot find an input file — run `cd ../agent && npm run mock` first. |
 
-Podrobnejša navodila so v [`testna-okolja/README.md`](../README.md):
-[postavitev na dveh napravah](../README.md#postavitev-na-dveh-napravah),
-[priporočen vrstni red poskusov](../README.md#priporočen-vrstni-red-poskusov),
-[skrbniška prijava in žetoni](../README.md#skrbniška-prijava),
-[zajem z Wiresharkom](../README.md#zajem-z-wiresharkom) in
-[uradni protokol x402 v2](../README.md#uradni-protokol-x402-v2).
+More detailed instructions are in [`test-environments/README.md`](../README.md):
+[two-device setup](../README.md#two-device-setup),
+[recommended experiment order](../README.md#recommended-experiment-order),
+[admin login and tokens](../README.md#admin-login),
+[Wireshark capture](../README.md#wireshark-capture) and
+[the official x402 v2 protocol](../README.md#official-x402-v2-protocol).

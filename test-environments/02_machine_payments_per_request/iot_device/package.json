@@ -1,5 +1,5 @@
 {
-  "name": "x402-iot-transakcije",
+  "name": "x402-iot-per-request",
   "version": "1.0.0",
   "description": "Mock IoT device (temperature+humidity) charging one on-chain tx per reading",
   "main": "server.js",

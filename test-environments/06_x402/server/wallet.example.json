@@ -1,7 +1,7 @@
 {
-  "_opomba": "PONUDNIK (merchant) potrebuje SAMO naslov — nikoli privatnega ključa. Kopiraj to v wallet.json in vpiši naslov denarnice, ki PREJEMA plačila (tvoja testna denarnica prejemnika). Za enkratna plačila je to prejemnik cene 1e-7 ETH (≈ 0,025 centa pri ETH_EUR_RATE).",
+  "_note": "PROVIDER (merchant) needs ONLY an address — never a private key. Copy this to wallet.json and enter the address of the wallet that should RECEIVE payments.",
   "address": "0x0000000000000000000000000000000000000000",
-  "_opomba_x402": "x402 v2: v testni ETH konfiguraciji (mock) ključ NI potreben; x402SettlerPrivateKey je PORAVNALNI ključ za pravi tek s pravim žetonom EIP-3009 (potrebuje ETH za gas; NIKOLI ga ne deli in ne nalagaj v git). x402Address je neobvezni prejemnik (payTo); brez njega se uporabi 'address'.",
+  "_note_x402": "x402 v2 (parallel mode, test ETH configuration): x402SettlerPrivateKey is the server's/facilitator's SETTLEMENT key for the official x402 protocol run (settlement is synthetic in mock); x402Address is the receiving address. Not needed in mock mode.",
   "x402Address": "",
   "x402SettlerPrivateKey": ""
 }

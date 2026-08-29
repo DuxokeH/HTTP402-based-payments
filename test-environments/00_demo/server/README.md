@@ -2,7 +2,7 @@
 
 Production-ready Express server implementing the HTTP 402 payment flow on Sepolia testnet, with a browser frontend (MetaMask), OpenAI behind the paywall, SQLite persistence, security hardening, and a Docker/Caddy deployment story.
 
-The CLI client at [../klient](../klient) is an **optional** developer demo. The server runs fine without it — public users pay through the included web UI.
+The CLI client at [../client](../client) is an **optional** developer demo. The server runs fine without it — public users pay through the included web UI.
 
 ---
 
@@ -96,7 +96,7 @@ What the deployer must still do:
 ```bash
 # On the VPS, as a non-root user:
 git clone <your-fork> ~/x402-repo
-cd ~/x402-repo/testna-okolja/00_demo/server
+cd ~/x402-repo/test-environments/00_demo/server
 cp .env.example .env
 # fill in: ALLOWED_ORIGINS, OPENAI_API_KEY, OPENAI_DAILY_USD_CAP
 # place wallet.json in this directory (generated offline on your laptop!)
@@ -104,12 +104,12 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Caddy provisions a Let's Encrypt cert automatically the first time. The full step-by-step (DNS, OpenAI key, backups, monitoring) is in [docs/POSTAVITEV.md](../docs/POSTAVITEV.md).
+Caddy provisions a Let's Encrypt cert automatically the first time. The full step-by-step (DNS, OpenAI key, backups, monitoring) is in [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md).
 
 ### Upgrades
 
 ```bash
-cd ~/x402-repo && git pull && cd testna-okolja/00_demo/server && docker compose up -d --build
+cd ~/x402-repo && git pull && cd test-environments/00_demo/server && docker compose up -d --build
 ```
 
 SQLite state survives because `./data` is a bind-mounted volume.

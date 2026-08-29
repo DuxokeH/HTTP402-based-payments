@@ -1,12 +1,12 @@
 # syntax=docker/dockerfile:1
-# Slika za TRGOVCA v mapi 04_spletisce_posrednik (posredniška veja).
-# Ta proces nima dostopa do verige — plačilno stanje vodi posrednik (../posrednik).
+# Image for the MERCHANT in the 04_website_facilitator folder (facilitator branch).
+# This process has no chain access — payment state is kept by the facilitator (../facilitator).
 FROM node:20-alpine AS deps
 WORKDIR /app
 RUN apk add --no-cache python3 make g++ \
  && ln -sf python3 /usr/bin/python
 COPY package.json package-lock.json* ./
-# better-sqlite3 se prevede iz izvorne kode, zato zgornji build paketi.
+# better-sqlite3 is compiled from source, hence the build packages above.
 RUN if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi
 
 FROM node:20-alpine AS runtime
@@ -16,10 +16,10 @@ RUN apk add --no-cache curl tini \
 
 ENV NODE_ENV=production \
     PORT=8081 \
-    DB_PATH=/app/data/spletisce_posrednik.db
+    DB_PATH=/app/data/website_facilitator.db
 
 COPY --from=deps /app/node_modules ./node_modules
-COPY server.js runner.js db.js auth.js posrednik.js x402.js db_x402.js package.json ./
+COPY server.js runner.js db.js auth.js facilitator.js x402.js db_x402.js package.json ./
 COPY public ./public
 
 RUN mkdir -p /app/data \

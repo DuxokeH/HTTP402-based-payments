@@ -1,10 +1,10 @@
 {
-  "_opomba": "Privzeti naslovi za merilni agent. Prepišeš jih z zastavicami (--merchant-url, --posrednik-url, --rpc-url) ali z okoljskimi spremenljivkami. V posredniški topologiji sta naslova DVA, ker sta trgovec in posrednik ločena procesa.",
+  "_note": "Default URLs for the measurement agent. Override them with the flags (--merchant-url, --facilitator-url, --rpc-url) or with environment variables. In the facilitator topology there are TWO URLs, because the merchant and the facilitator are separate processes.",
   "MERCHANT_URL": "http://127.0.0.1:8081",
-  "POSREDNIK_URL": "http://127.0.0.1:4000",
+  "FACILITATOR_URL": "http://127.0.0.1:4000",
   "NETWORK": "sepolia",
   "RPC_URL": "https://ethereum-sepolia-rpc.publicnode.com",
   "CONFIRMATIONS": 1,
-  "_opomba_zeton": "ADMIN_TOKEN je strojni žeton TRGOVCA: grep ZETON ../streznik/data/admin-credentials.txt. Posrednikova pot /submit-payment je javna in žetona ne potrebuje.",
+  "_note_token": "ADMIN_TOKEN is the MERCHANT's machine token: grep TOKEN ../server/data/admin-credentials.txt. The facilitator's /submit-payment route is public and needs no token.",
   "ADMIN_TOKEN": ""
 }

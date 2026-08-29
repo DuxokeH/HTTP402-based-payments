@@ -1,30 +1,30 @@
 # X402 Payment Protocol - Protocol Specification
 **Version:** 2.0  
-**Date:** Avgust 2026  
+**Date:** August 2026  
 **Author:** Tim Heinzer  
 
-> 🚀 **Za deployment navodila, instalacijo, troubleshooting in praktične primere glej:** [README.md](../README.md)
+> 🚀 **For deployment instructions, installation, troubleshooting and worked examples, see:** [README.md](../README.md)
 
 ---
 
-## 1. UVOD
+## 1. INTRODUCTION
 
-### 1.1 Namen Dokumenta
+### 1.1 Purpose of This Document
 
-Ta dokument opisuje formalno specifikacijo X402 Payment Protocol - razširitve HTTP/1.1 protokola za podporo blockchain-based plačil. Protokol implementira HTTP status kodo 402 (Payment Required), ki je bila rezervirana v RFC 2616 in RFC 7231, vendar do sedaj ni bila standardizirana.
+This document is the formal specification of the X402 Payment Protocol - an extension of HTTP/1.1 that adds support for blockchain-based payments. The protocol builds on HTTP status code 402 (Payment Required), a code reserved by RFC 2616 and RFC 7231 but never standardised.
 
-Specifikacija opisuje **dejansko implementacijo** v tem repozitoriju (`server/server.js`, `server/db.js`, `klient/run.js`, `server/public/app.js`).
+The specification describes the **actual implementation** in this repository (`server/server.js`, `server/db.js`, `client/run.js`, `server/public/app.js`).
 
-### 1.2 Obseg
+### 1.2 Scope
 
-Specifikacija pokriva:
-- HTTP message format (združena izmenjava: verifikacija + dostava)
-- Payment request/response strukture
-- Blockchain verification mehanizme
-- State machine za payment flow
+The specification covers:
+- HTTP message format (merged exchange: verification + delivery)
+- Payment request/response structures
+- Blockchain verification mechanisms
+- The state machine of the payment flow
 - Error handling
 
-### 1.3 Standardi
+### 1.3 Standards
 
 - **RFC 2616** - HTTP/1.1 Protocol
 - **RFC 7231** - HTTP/1.1 Semantics (Section 6.5.2 - 402 Payment Required)
@@ -34,15 +34,15 @@ Specifikacija pokriva:
 
 ---
 
-## 2. ARHITEKTURA PROTOKOLA
+## 2. PROTOCOL ARCHITECTURE
 
-### 2.1 Komponente
+### 2.1 Components
 
 ```
 ┌─────────────┐                          ┌──────────────────┐
 │             │      HTTP/HTTPS          │                  │
-│   KLIENT    │◄─────────────────────────►│  HOSTING SERVER  │
-│ (Uporabnik) │                          │   (Merchant)     │
+│   CLIENT    │◄─────────────────────────►│  HOSTING SERVER  │
+│   (User)    │                          │   (Merchant)     │
 │             │                          │                  │
 └──────┬──────┘                          └────────┬─────────┘
        │                                          │
@@ -54,13 +54,13 @@ Specifikacija pokriva:
              └─────────────────────────────┘
 ```
 
-**End-to-End Princip:**
-- Samo 2 aktivne komponente (klient, server)
-- Blockchain = pasivna javna knjiga
-- Ni posrednikov (facilitatorjev)
-- Direktna verifikacija
+**End-to-End Principle:**
+- Only 2 active components (client, server)
+- Blockchain = passive public ledger
+- No intermediaries (facilitators)
+- Direct verification
 
-### 2.2 Protokol Layers
+### 2.2 Protocol Layers
 
 ```
 ┌──────────────────────────────────────┐
@@ -74,56 +74,56 @@ Specifikacija pokriva:
 └──────────────────────────────────────┘
 ```
 
-### 2.3 Združena Izmenjava (Design Choice)
+### 2.3 Merged Exchange (Design Choice)
 
-Implementacija **združi verifikacijo plačila in dostavo vsebine v isto izmenjavo**. Strežnik ima za plačljivo storitev samo dve metodi na isti poti:
+The implementation **merges payment verification and content delivery into a single exchange**. For the paid service the server exposes only two methods on one path:
 
-- `GET /service` → izda plačilno zahtevo (402),
-- `POST /service` → preveri transakcijo na verigi **in** v istem odgovoru vrne vsebino ter dokazni žeton.
+- `GET /service` → issues a payment request (402),
+- `POST /service` → verifies the transaction on chain **and** returns the content plus a proof token in the same response.
 
-Na žici zato nastaneta **2 para zahteva/odgovor = 4 sporočila HTTP**:
+On the wire this produces **2 request/response pairs = 4 HTTP messages**:
 
 ```
-1. C → S   GET  /service                                   (zahteva vira)
-2. S → C   402  Payment Required   {payment: {...}}         (račun)
-   ─────── klient pošlje transakcijo na Sepolio, dobi txHash ───────
+1. C → S   GET  /service                                    (resource request)
+2. S → C   402  Payment Required   {payment: {...}}         (the bill)
+   ────── client sends the transaction to Sepolia, gets txHash ──────
 3. C → S   POST /service  {requestId, txHash, network,
-                           payerAddress, prompt}            (dokazilo + zahteva)
-4. S → C   200  OK        {response, proofToken, payment}   (vsebina + žeton)
+                           payerAddress, prompt}            (proof + request)
+4. S → C   200  OK        {response, proofToken, payment}   (content + token)
 ```
 
-Ločenega vira, ki bi plačilo samo preveril in vrnil žeton (klient pa bi moral vsebino zahtevati še s tretjo izmenjavo), strežnik **ne izpostavlja**. Zasnova z ločeno verifikacijo bi potrebovala tri pare (6 sporočil); združena jih potrebuje dva (4 sporočila), torej **eno celotno HTTP povratno pot manj**, klient pa dobi vsebino takoj, ko je plačilo potrjeno.
+The server **does not expose** a separate resource that would only verify the payment and return a token, leaving the client to fetch the content in a third exchange. A design with separate verification would need three pairs (6 messages); the merged design needs two (4 messages), i.e. **one full HTTP round trip fewer**, and the client receives the content the moment the payment is confirmed.
 
-**Neobvezni tretji par (`--ack`):** klient lahko po prejemu žetona pošlje še `GET /service` z glavo `X-Payment`. Ta izmenjava samo potrdi, da je plačilo avtorizirano; **ni** del obveznega poteka in ne dostavi vsebine.
+**Optional third pair (`--ack`):** after receiving the token the client may send one more `GET /service` carrying the `X-Payment` header. That exchange only acknowledges that the payment is authorised; it is **not** part of the mandatory flow and delivers no content.
 
-### 2.4 Vmesnik HTTP (celoten seznam virov)
+### 2.4 HTTP Interface (complete list of resources)
 
-| Metoda | Pot | Namen |
-|--------|-----|-------|
-| `GET` | `/service` | brez glave `X-Payment`: izda 402 s plačilno zahtevo; z veljavno glavo: potrdi avtorizacijo |
-| `POST` | `/service` | združena izmenjava (verifikacija + dostava); z glavo `X-Payment` unovči že izdan žeton |
-| `GET` | `/config` | javna konfiguracija za spletni odjemalec (omrežje, cena, naslov prejemnika) |
-| `GET` | `/health` | stanje strežnika, baze in povezave do vozlišča JSON-RPC |
-| `GET` | `/` in statične datoteke | spletni odjemalec (`server/public/`) |
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/service` | without an `X-Payment` header: issues a 402 with a payment request; with a valid header: acknowledges authorisation |
+| `POST` | `/service` | merged exchange (verification + delivery); with an `X-Payment` header, redeems an already issued token |
+| `GET` | `/config` | public configuration for the web client (network, price, recipient address) |
+| `GET` | `/health` | status of the server, the database and the connection to the JSON-RPC node |
+| `GET` | `/` and static files | web client (`server/public/`) |
 
-Drugih poti strežnik ne izpostavlja.
+The server exposes no other paths.
 
 ---
 
 ## 3. MESSAGE FORMAT SPECIFICATION
 
-### 3.1 Sporočilo 1 in 2: HTTP 402 Payment Required
+### 3.1 Messages 1 and 2: HTTP 402 Payment Required
 
-**Trigger:** Klient zahteva zaščiten vir brez glave `X-Payment`
+**Trigger:** the client requests a protected resource without an `X-Payment` header
 
 **HTTP Request:**
 ```http
 GET /service HTTP/1.1
 Host: <merchant-server>
-X-Payer: 0x<payerAddress>          ; neobvezno
+X-Payer: 0x<payerAddress>          ; optional
 ```
 
-Naslov plačnika lahko klient napove z glavo `X-Payer` ali s poizvedbenim parametrom `?payer=0x...`. Če je naslov veljaven, se **veže** na plačilno zahtevo in ga mora kasnejši `POST /service` ujeti (glej 5.2). Neveljaven naslov se tiho zavrže (zahteva ostane nevezana).
+The client may declare the payer address either with the `X-Payer` header or with the `?payer=0x...` query parameter. If the address is valid it is **bound** to the payment request, and the later `POST /service` must match it (see 5.2). An invalid address is silently discarded (the request stays unbound).
 
 **HTTP Response:**
 ```http
@@ -147,21 +147,21 @@ Date: <timestamp>
 }
 ```
 
-**Polja:**
+**Fields:**
 
-| Polje | Tip | Obvezno | Opis |
-|-------|-----|---------|------|
-| `error` | string | Da | Kratek opis napake ("Payment Required") |
-| `message` | string | Da | Čitljiv opis za uporabnika |
-| `payment.requestId` | UUID v4 | Da | Unikaten identifikator zahteve |
-| `payment.to` | Ethereum Address | Da | Naslov merchant denarnice (0x..., checksum oblika) |
-| `payment.amount` | string | Da | Znesek v ETH (decimalni string, `SERVICE_PRICE_ETH`) |
-| `payment.currency` | string | Da | Valuta ("ETH") |
-| `payment.network` | string | Da | Blockchain network ("sepolia") |
-| `payment.createdAt` | ISO 8601 | Da | Čas izdaje zahteve |
-| `payment.expiresInSeconds` | number | Da | Veljavnost zahteve (`PAYMENT_REQUEST_TTL_SECONDS`, privzeto 1800) |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `error` | string | Yes | Short error label ("Payment Required") |
+| `message` | string | Yes | Human-readable description for the user |
+| `payment.requestId` | UUID v4 | Yes | Unique identifier of the request |
+| `payment.to` | Ethereum Address | Yes | Merchant wallet address (0x..., checksummed form) |
+| `payment.amount` | string | Yes | Amount in ETH (decimal string, `SERVICE_PRICE_ETH`) |
+| `payment.currency` | string | Yes | Currency ("ETH") |
+| `payment.network` | string | Yes | Blockchain network ("sepolia") |
+| `payment.createdAt` | ISO 8601 | Yes | Time the request was issued |
+| `payment.expiresInSeconds` | number | Yes | Validity of the request (`PAYMENT_REQUEST_TTL_SECONDS`, default 1800) |
 
-Plačilna zahteva se zapiše v tabelo `payment_requests` (SQLite) skupaj s prejemnikom, zneskom, omrežjem, morebitnim vezanim plačnikom in časom poteka.
+The payment request is written to the `payment_requests` table (SQLite) together with the recipient, the amount, the network, the bound payer (if any) and the expiry time.
 
 **Validation Rules:**
 - `requestId`: MUST be valid UUID v4 format
@@ -171,9 +171,9 @@ Plačilna zahteva se zapiše v tabelo `payment_requests` (SQLite) skupaj s preje
 
 ---
 
-### 3.2 Sporočilo 3: Združena Zahteva (verifikacija + dostava)
+### 3.2 Message 3: Merged Request (verification + delivery)
 
-**Trigger:** Klient je poslal plačilno transakcijo na verigo in ima `txHash`
+**Trigger:** the client has sent the payment transaction on chain and holds a `txHash`
 
 **HTTP Request:**
 ```http
@@ -187,34 +187,34 @@ Content-Length: <length>
   "txHash": "0x<transactionHash>",
   "network": "sepolia",
   "payerAddress": "0x<payerAddress>",
-  "prompt": "<vprašanje za storitev>",
+  "prompt": "<question for the service>",
   "model": "gpt-4o-mini"
 }
 ```
 
-**Polja:**
+**Fields:**
 
-| Polje | Tip | Obvezno | Opis |
-|-------|-----|---------|------|
-| `requestId` | UUID v4 | Da | ID iz prvotnega 402 response |
-| `txHash` | string | Da | Ethereum transaction hash (`0x` + 64 hex znakov) |
-| `network` | string | Da | MORA biti enak `NETWORK` strežnika (zod `literal`) |
-| `payerAddress` | Ethereum Address | Da | Naslov, s katerega je bila transakcija poslana |
-| `prompt` | string | Da | Vhod za plačljivo storitev, 1..`OPENAI_MAX_PROMPT_CHARS` (privzeto 4000) znakov |
-| `model` | string | Ne | Želeni model; če ni v cenovniku strežnika, se uporabi privzeti (`OPENAI_MODEL`) |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `requestId` | UUID v4 | Yes | ID from the original 402 response |
+| `txHash` | string | Yes | Ethereum transaction hash (`0x` + 64 hex characters) |
+| `network` | string | Yes | MUST equal the server's `NETWORK` (zod `literal`) |
+| `payerAddress` | Ethereum Address | Yes | Address the transaction was sent from |
+| `prompt` | string | Yes | Input for the paid service, 1..`OPENAI_MAX_PROMPT_CHARS` (default 4000) characters |
+| `model` | string | No | Desired model; if it is not in the server's price list, the default (`OPENAI_MODEL`) is used |
 
-**Validation Rules (zod, pred vsakim dostopom do verige):**
+**Validation Rules (zod, before any chain access):**
 - `requestId`: MUST be valid UUID
-- `txHash`: MUST match `^0x[0-9a-fA-F]{64}$`; strežnik ga pred uporabo pretvori v **male črke** (primarni ključ tabele `redeemed_tx_hashes` je občutljiv na velikost črk)
+- `txHash`: MUST match `^0x[0-9a-fA-F]{64}$`; the server converts it to **lowercase** before use (the primary key of the `redeemed_tx_hashes` table is case-sensitive)
 - `network`: MUST equal server `NETWORK`
 - `payerAddress`: MUST be parsable by `ethers.getAddress()`
 - `prompt`: MUST be non-empty and within the length limit
 
-Telo zahteve je omejeno na **64 kB** (`express.json({ limit: '64kb' })`).
+The request body is capped at **64 kB** (`express.json({ limit: '64kb' })`).
 
 ---
 
-### 3.3 Sporočilo 4: Združen Odgovor (Success)
+### 3.3 Message 4: Merged Response (Success)
 
 **HTTP Response:**
 ```http
@@ -224,7 +224,7 @@ Content-Length: <length>
 
 {
   "success": true,
-  "response": "<vsebina storitve>",
+  "response": "<service content>",
   "model": "gpt-4o-mini",
   "usage": {
     "prompt_tokens": 24,
@@ -241,31 +241,31 @@ Content-Length: <length>
 }
 ```
 
-**Polja:**
+**Fields:**
 
-| Polje | Tip | Opis |
-|-------|-----|------|
-| `success` | boolean | `true` ob uspešni verifikaciji in dostavi |
-| `response` | string | Plačana vsebina (odgovor modela) |
-| `model` | string | Uporabljeni model; `"demo"`, kadar `OPENAI_API_KEY` ni nastavljen |
-| `usage` | object | Poraba žetonov modela (ni prisotno v demo načinu) |
-| `proofToken` | string | Dokazni žeton, izdan v tej isti izmenjavi |
-| `expiresInSeconds` | number | Veljavnost žetona (`PROOF_TOKEN_TTL_SECONDS`, privzeto 600) |
-| `payment.verified` | boolean | Vedno `true` v uspešnem odgovoru |
-| `payment.txHash` | string | Potrjen transaction hash |
-| `payment.blockNumber` | number | Blok, v katerem je transakcija |
+| Field | Type | Description |
+|-------|------|-------------|
+| `success` | boolean | `true` on successful verification and delivery |
+| `response` | string | The paid content (the model's answer) |
+| `model` | string | Model used; `"demo"` when `OPENAI_API_KEY` is not set |
+| `usage` | object | Model token usage (absent in demo mode) |
+| `proofToken` | string | Proof token, issued within this same exchange |
+| `expiresInSeconds` | number | Token validity (`PROOF_TOKEN_TTL_SECONDS`, default 600) |
+| `payment.verified` | boolean | Always `true` in a successful response |
+| `payment.txHash` | string | Confirmed transaction hash |
+| `payment.blockNumber` | number | Block that contains the transaction |
 
 **Token Format:**
 - `proofToken`: `"proof_"` + UUID v4
-- Primer: `proof_a1b2c3d4-e5f6-7890-1234-567890abcdef`
+- Example: `proof_a1b2c3d4-e5f6-7890-1234-567890abcdef`
 
-**Demo način (brez `OPENAI_API_KEY`):** odgovor ima enako obliko, polje `usage` manjka, `model` je `"demo"`, `response` pa se začne z `[DEMO MODE — no OPENAI_API_KEY set]`. Potek HTTP je identičen.
+**Demo mode (no `OPENAI_API_KEY`):** the response has the same shape, the `usage` field is missing, `model` is `"demo"`, and `response` starts with `[DEMO MODE — no OPENAI_API_KEY set]`. The HTTP flow is identical.
 
-**Pomembno:** žeton je v tej točki že **porabljen** (`consumed_at` je nastavljen pred klicem storitve). Klient ga ne potrebuje za dostop do te vsebine - dobi jo v istem odgovoru. Žeton služi kot dokazilo o plačilu (npr. za neobvezno potrditev iz 3.4).
+**Important:** at this point the token has already been **consumed** (`consumed_at` is set before the service is called). The client does not need it to reach this content - it arrives in the same response. The token serves as proof of payment (e.g. for the optional acknowledgement in 3.4).
 
 ---
 
-### 3.4 Neobvezna Potrditev Avtorizacije (`--ack`)
+### 3.4 Optional Authorisation Acknowledgement (`--ack`)
 
 **HTTP Request:**
 ```http
@@ -280,8 +280,8 @@ X-Payment-Proof: proof_<uuid>
 ```
 
 **Validation:**
-- Žeton MORA obstajati v tabeli `payment_proofs`
-- Žeton NE SME biti potekel (`expires_at > now`)
+- The token MUST exist in the `payment_proofs` table
+- The token MUST NOT be expired (`expires_at > now`)
 
 **Success Response:**
 ```http
@@ -302,7 +302,7 @@ Content-Type: application/json
 }
 ```
 
-Polje `consumed` pove, ali je bil žeton že unovčen. Ta izmenjava **ne dostavi vsebine** in ne porabi žetona; potrjuje samo, da je plačilo opravljeno in evidentirano.
+The `consumed` field reports whether the token has already been redeemed. This exchange **delivers no content** and does not consume the token; it only confirms that the payment was made and recorded.
 
 **Error Response:**
 ```http
@@ -313,9 +313,9 @@ HTTP/1.1 403 Forbidden
 
 ---
 
-### 3.5 Rezervna Izmenjava: Unovčenje Izdanega Žetona
+### 3.5 Fallback Exchange: Redeeming an Issued Token
 
-Uporabi se, kadar klient že ima neporabljen žeton (npr. ker je združena izmenjava vrnila `503` zaradi dnevne omejitve porabe, plačilo pa je bilo veljavno).
+Used when the client already holds an unconsumed token (e.g. because the merged exchange returned `503` due to the daily spending cap even though the payment was valid).
 
 **HTTP Request:**
 ```http
@@ -325,25 +325,25 @@ Content-Type: application/json
 X-Payment: proof_<uuid>
 
 {
-  "prompt": "<vprašanje za storitev>",
+  "prompt": "<question for the service>",
   "model": "gpt-4o-mini"
 }
 ```
 
-V tej veji telo **ne** vsebuje `requestId`, `txHash`, `network` ali `payerAddress` - plačilo je bilo preverjeno že prej. Strežnik:
+In this branch the body does **not** carry `requestId`, `txHash`, `network` or `payerAddress` - the payment was verified earlier. The server:
 
-1. poišče žeton (`403 Invalid or expired proof token`, če ga ni ali je potekel),
-2. zavrne že unovčen žeton (`403 Proof token already consumed`),
-3. validira telo (`400 Validation error`),
-4. preveri dnevno omejitev porabe (`503`),
-5. **označi žeton kot porabljen pred** klicem storitve (`409`, če ga je vzporedna zahteva prehitela),
-6. vrne enak odgovor kot v 3.3.
+1. looks up the token (`403 Invalid or expired proof token` if it is missing or expired),
+2. rejects an already redeemed token (`403 Proof token already consumed`),
+3. validates the body (`400 Validation error`),
+4. checks the daily spending cap (`503`),
+5. **marks the token consumed before** calling the service (`409` if a concurrent request got there first),
+6. returns the same response as in 3.3.
 
 ---
 
-### 3.6 Pomožna Vira
+### 3.6 Auxiliary Resources
 
-**`GET /config`** - javna konfiguracija za spletni odjemalec:
+**`GET /config`** - public configuration for the web client:
 
 ```json
 {
@@ -357,7 +357,7 @@ V tej veji telo **ne** vsebuje `requestId`, `txHash`, `network` ali `payerAddres
 }
 ```
 
-**`GET /health`** - stanje strežnika (`200 ok` / `503 degraded`):
+**`GET /health`** - server status (`200 ok` / `503 degraded`):
 
 ```json
 {
@@ -373,19 +373,19 @@ V tej veji telo **ne** vsebuje `requestId`, `txHash`, `network` ali `payerAddres
 }
 ```
 
-Poizvedba po zadnjem bloku ima 2-sekundni timeout; ob neuspehu sta `rpc: "down"` in `status: "degraded"` (HTTP 503).
+The last-block query has a 2-second timeout; on failure `rpc` is `"down"` and `status` is `"degraded"` (HTTP 503).
 
 ---
 
 ## 4. STATE MACHINE
 
-### 4.1 Sequence Diagram (obvezni potek)
+### 4.1 Sequence Diagram (mandatory flow)
 
 ```
-KLIENT                    HOSTING SERVER                 SEPOLIA
+CLIENT                    HOSTING SERVER                 SEPOLIA
   │                             │                            │
   │─(1) GET /service ──────────►│                            │
-  │                             │ zapiši payment_request     │
+  │                             │ store payment_request      │
   │◄─(2) 402 {payment} ─────────│                            │
   │                             │                            │
   │─ sendTransaction ───────────┼───────────────────────────►│
@@ -396,16 +396,16 @@ KLIENT                    HOSTING SERVER                 SEPOLIA
   │      network, payerAddress, │◄─ tx ──────────────────────│
   │      prompt}                │─ getTransactionReceipt ───►│
   │                             │◄─ receipt ─────────────────│
-  │                             │ preveri + izdaj žeton      │
-  │                             │ pokliči storitev           │
+  │                             │ verify + mint token        │
+  │                             │ call the service           │
   │◄─(4) 200 {response,         │                            │
   │      proofToken, payment} ──│                            │
   │                             │                            │
-  │─ (neobvezno) GET + X-Payment ►│                          │
+  │─ (optional) GET + X-Payment ─►│                          │
   │◄─ 200 {authorized:true} ────│                            │
 ```
 
-### 4.2 Klient State Machine
+### 4.2 Client State Machine
 
 ```
 ┌─────────────┐
@@ -421,8 +421,8 @@ KLIENT                    HOSTING SERVER                 SEPOLIA
        ▼
     ┌──────┐
     │ 402? │────No───►┌──────────────┐
-    └──┬───┘          │ Napaka /     │
-       │              │ prekini      │
+    └──┬───┘          │ Error /      │
+       │              │ abort        │
       Yes             └──────────────┘
        │
        ▼
@@ -449,18 +449,18 @@ KLIENT                    HOSTING SERVER                 SEPOLIA
     ┌───────┐
     │ 200?  │───No───►┌──────────────────────┐
     └──┬────┘         │ 400/403/409/502/503  │
-       │              │ obravnavaj napako    │
+       │              │ handle the error     │
       Yes             └──────────────────────┘
        │
        ▼
 ┌──────────────────────────────┐
-│ Vsebina + proofToken         │
-│ prejeta v ISTEM odgovoru     │
+│ Content + proofToken         │
+│ received in the SAME response│
 └──────┬───────────────────────┘
        │
        ▼
 ┌──────────────────────────────┐
-│ (neobvezno --ack)            │
+│ (optional --ack)             │
 │ GET /service + X-Payment     │
 │ → 200 authorized:true        │
 └──────────────────────────────┘
@@ -477,13 +477,13 @@ KLIENT                    HOSTING SERVER                 SEPOLIA
 ┌──────────────┐
 │ X-Payment ?  │
 └──┬────────┬──┘
-  Ne       Da
+  No      Yes
    │        │
    │        ▼
    │   ┌──────────────┐
-   │   │ Poišči žeton │
+   │   │ Find token   │
    │   └──┬────────┬──┘
-   │  Najden?    Ni / potekel
+   │  Found?     Missing / expired
    │      │          │
    │      ▼          ▼
    │  ┌──────────────────┐  ┌────────────────────────┐
@@ -493,7 +493,7 @@ KLIENT                    HOSTING SERVER                 SEPOLIA
    ▼
 ┌─────────────────────┐
 │ Generate requestId  │
-│ Zapiši v SQLite     │
+│ Write to SQLite     │
 │ Return 402          │
 └─────────────────────┘
 ```
@@ -502,54 +502,54 @@ KLIENT                    HOSTING SERVER                 SEPOLIA
 
 ```
 ┌──────────────┐
-│ X-Payment ?  │───Da──►┌─────────────────────────┐
-└──────┬───────┘        │ Unovči obstoječi žeton  │
+│ X-Payment ?  │───Yes─►┌─────────────────────────┐
+└──────┬───────┘        │ Redeem existing token   │
        │                │ (3.5) → 200 / 403 / 409 │
-      Ne                └─────────────────────────┘
+      No                └─────────────────────────┘
        │
        ▼
 ┌─────────────────────┐
-│ Validate body (zod) │──Napaka──► 400 Validation error
+│ Validate body (zod) │──Error───► 400 Validation error
 └──────┬──────────────┘
        │
        ▼
 ┌─────────────────────┐
-│ Poišči payment_req  │──Ni / potekel──► 400 Invalid or expired
-└──────┬──────────────┘                  payment request
+│ Find payment_req    │──Missing / expired──► 400 Invalid or expired
+└──────┬──────────────┘                       payment request
        │
        ▼
 ┌─────────────────────┐
-│ Replay check        │──Že unovčen──► 400 Transaction already
+│ Replay check        │──Redeemed────► 400 Transaction already
 │ (redeemed_tx_hashes)│                 redeemed
 └──────┬──────────────┘
        │
        ▼
 ┌─────────────────────┐
-│ Verify on Blockchain│──Neveljavno──► 400 (glej 6.2)
+│ Verify on Blockchain│──Invalid─────► 400 (see 6.2)
 │ (JSON-RPC calls)    │
 └──────┬──────────────┘
        │
        ▼
 ┌─────────────────────┐
-│ Označi tx unovčen   │
-│ Izdaj proofToken    │
+│ Mark tx redeemed    │
+│ Mint proofToken     │
 └──────┬──────────────┘
        │
        ▼
 ┌─────────────────────┐
-│ Dnevna meja porabe? │──Dosežena──► 503 + proofToken
-└──────┬──────────────┘              (plačilo velja, žeton
-       │                              ostane neporabljen)
+│ Daily spend cap?    │──Reached───► 503 + proofToken
+└──────┬──────────────┘              (payment stands, token
+       │                              stays unconsumed)
        ▼
 ┌─────────────────────┐
-│ Porabi žeton        │──Vzporedna zahteva──► 409
+│ Consume token       │──Concurrent request──► 409
 │ (consumed_at)       │
 └──────┬──────────────┘
        │
        ▼
 ┌─────────────────────┐
-│ Pokliči storitev    │──Napaka storitve──► 502 + proofToken
-│ 200 OK: vsebina +   │
+│ Call the service    │──Service error────► 502 + proofToken
+│ 200 OK: content +   │
 │ proofToken          │
 └─────────────────────┘
 ```
@@ -560,7 +560,7 @@ KLIENT                    HOSTING SERVER                 SEPOLIA
 
 ### 5.1 Verification Steps
 
-Strežnik med obravnavo `POST /service` izvede naslednje korake:
+While handling `POST /service` the server performs the following steps:
 
 **Step 1: Retrieve Transaction**
 ```javascript
@@ -572,27 +572,27 @@ provider.getTransaction(txHash)
 provider.getTransactionReceipt(txHash)
 ```
 
-**Step 3: Confirmations (samo če `MIN_CONFIRMATIONS > 1`)**
+**Step 3: Confirmations (only if `MIN_CONFIRMATIONS > 1`)**
 ```javascript
 provider.getBlockNumber()   // confirmations = latest - receipt.blockNumber + 1
 ```
 
 **Step 4: Validation Checks**
 
-| Check | Pogoj | Pričakovano | Odgovor ob napaki |
-|-------|-------|-------------|-------------------|
-| Payment request obstaja | `payment_requests` vsebuje `requestId` in ni potekel | true | 400 `Invalid or expired payment request` |
-| Replay | `redeemed_tx_hashes` ne vsebuje `txHash` | true | 400 `Transaction already redeemed` |
+| Check | Condition | Expected | Response on failure |
+|-------|-----------|----------|---------------------|
+| Payment request exists | `payment_requests` holds `requestId` and it has not expired | true | 400 `Invalid or expired payment request` |
+| Replay | `redeemed_tx_hashes` does not hold `txHash` | true | 400 `Transaction already redeemed` |
 | Transaction exists | `tx !== null` | true | 400 `Transaction verification failed` / `Transaction not found` |
 | Receipt exists | `receipt !== null` | true | 400 `Transaction verification failed` / `Transaction not confirmed yet` |
 | Confirmations | `latest - blockNumber + 1 >= MIN_CONFIRMATIONS` | true | 400 `Transaction verification failed` / `Only N/M confirmations` |
 | Status | `receipt.status === 1` | 1 (success) | 400 `Transaction failed on chain` |
-| Recipient | `tx.to == paymentRequest.recipient` | enak naslov | 400 `Invalid recipient` |
-| Payer (deklariran) | `tx.from == payerAddress` | enak naslov | 400 `Payer mismatch` |
-| Payer (vezan ob 402) | `payment_requests.payer_address == payerAddress` | enak naslov | 400 `Payer mismatch with original request` |
-| Amount | `tx.value >= parseEther(amount_eth)` | zadosten znesek | 400 `Insufficient amount` |
+| Recipient | `tx.to == paymentRequest.recipient` | same address | 400 `Invalid recipient` |
+| Payer (declared) | `tx.from == payerAddress` | same address | 400 `Payer mismatch` |
+| Payer (bound at the 402) | `payment_requests.payer_address == payerAddress` | same address | 400 `Payer mismatch with original request` |
+| Amount | `tx.value >= parseEther(amount_eth)` | sufficient amount | 400 `Insufficient amount` |
 
-Primerjave naslovov potekajo neobčutljivo na velikost črk (`toLowerCase()`), `txHash` pa se normalizira v male črke že pred preverjanjem ponovitve.
+Address comparisons are case-insensitive (`toLowerCase()`), and `txHash` is normalised to lowercase before the replay check.
 
 ### 5.2 Transaction Validation Algorithm
 
@@ -649,9 +649,9 @@ FUNCTION handleMergedExchange(body):
   RETURN 200 { success, response, model, usage, proofToken, expiresInSeconds, payment }
 ```
 
-### 5.3 MOCK_VERIFY (kontrolni pogoj)
+### 5.3 MOCK_VERIFY (control condition)
 
-Če je `MOCK_VERIFY=true` (in strežnik ni v produkciji oz. je nastavljen `FORCE_MOCK=1`), strežnik **preskoči branje verige** in sestavi navidezno transakcijo iz podatkov plačilne zahteve (`blockNumber: 0`). Vse ostale kontrole (plačilna zahteva, ponovitev, enkratnost žetona) ostanejo v veljavi, potek in oblika sporočil HTTP pa sta identična realnemu načinu. Način je namenjen zajemu prometa in meritvam brez porabe testnih sredstev; **ni** varen za javno rabo.
+When `MOCK_VERIFY=true` (and the server is not running in production, or `FORCE_MOCK=1` is set), the server **skips reading the chain** and assembles a synthetic transaction from the payment request data (`blockNumber: 0`). Every other check (payment request, replay, single use of the token) stays in force, and the HTTP flow and message shapes are identical to real mode. The mode exists for traffic capture and measurements without spending testnet funds; it is **not** safe for public use.
 
 ---
 
@@ -661,21 +661,21 @@ FUNCTION handleMergedExchange(body):
 
 | Code | Name | When |
 |------|------|------|
-| **200** | OK | Uspešna združena izmenjava, uspešno unovčenje žetona ali potrditev avtorizacije |
-| **400** | Bad Request | Napaka validacije, potekla/neznana plačilna zahteva, neuspela verifikacija transakcije, ponovitev |
-| **402** | Payment Required | `GET /service` brez glave `X-Payment` |
-| **403** | Forbidden | Neveljaven/potekel dokazni žeton; že unovčen žeton |
-| **409** | Conflict | Žeton je vzporedno porabila druga zahteva |
-| **429** | Too Many Requests | Presežena omejitev pogostosti (`express-rate-limit`) |
-| **500** | Internal Server Error | Nepričakovana izjema (globalni error handler) |
-| **502** | Bad Gateway | Plačilo je veljavno, zunanja storitev pa je vrnila napako |
-| **503** | Service Unavailable | Dosežena dnevna zgornja meja porabe; `GET /health` ob nedosegljivem RPC ali bazi |
+| **200** | OK | Successful merged exchange, successful token redemption, or authorisation acknowledgement |
+| **400** | Bad Request | Validation error, expired/unknown payment request, failed transaction verification, replay |
+| **402** | Payment Required | `GET /service` without an `X-Payment` header |
+| **403** | Forbidden | Invalid/expired proof token; already redeemed token |
+| **409** | Conflict | The token was consumed concurrently by another request |
+| **429** | Too Many Requests | Rate limit exceeded (`express-rate-limit`) |
+| **500** | Internal Server Error | Unexpected exception (global error handler) |
+| **502** | Bad Gateway | The payment is valid but the external service returned an error |
+| **503** | Service Unavailable | Daily spending cap reached; `GET /health` when the RPC or the database is unreachable |
 
 ### 6.2 Application Error Messages
 
-Vsi napačni odgovori so JSON. Polje `error` je kratek strojno berljiv razlog, `message` (kadar je prisoten) pa človeku namenjeno pojasnilo.
+All error responses are JSON. The `error` field is a short machine-readable reason; `message` (where present) is a human-readable explanation.
 
-#### Validacija zahteve
+#### Request validation
 
 ```json
 {
@@ -684,9 +684,9 @@ Vsi napačni odgovori so JSON. Polje `error` je kratek strojno berljiv razlog, `
 }
 ```
 
-`details` je izpis `zod` (`error.flatten()`).
+`details` is the `zod` output (`error.flatten()`).
 
-#### Plačilna zahteva in ponovitev
+#### Payment request and replay
 
 ```json
 { "error": "Invalid or expired payment request" }
@@ -695,7 +695,7 @@ Vsi napačni odgovori so JSON. Polje `error` je kratek strojno berljiv razlog, `
 { "error": "Transaction already redeemed" }
 ```
 
-#### Verifikacija transakcije
+#### Transaction verification
 
 ```json
 {
@@ -704,13 +704,13 @@ Vsi napačni odgovori so JSON. Polje `error` je kratek strojno berljiv razlog, `
 }
 ```
 
-**Možne vrednosti `message`:**
-- `"Transaction not found"` - `txHash` ne obstaja na verigi
-- `"Transaction not confirmed yet"` - transakcija še ni v bloku (ni potrdila)
-- `"Only N/M confirmations"` - premalo potrditev glede na `MIN_CONFIRMATIONS`
-- sporočilo izjeme knjižnice/RPC vozlišča
+**Possible `message` values:**
+- `"Transaction not found"` - the `txHash` does not exist on chain
+- `"Transaction not confirmed yet"` - the transaction is not in a block yet (no receipt)
+- `"Only N/M confirmations"` - too few confirmations for `MIN_CONFIRMATIONS`
+- the exception message from the library or the RPC node
 
-**Ločeni odgovori po uspešnem branju transakcije:**
+**Separate responses once the transaction has been read successfully:**
 ```json
 { "error": "Transaction failed on chain" }
 ```
@@ -733,7 +733,7 @@ Vsi napačni odgovori so JSON. Polje `error` je kratek strojno berljiv razlog, `
 }
 ```
 
-#### Dokazni žeton
+#### Proof token
 
 ```json
 { "error": "Invalid or expired proof token" }
@@ -745,7 +745,7 @@ Vsi napačni odgovori so JSON. Polje `error` je kratek strojno berljiv razlog, `
 { "error": "Proof token consumed concurrently" }
 ```
 
-#### Omejitev porabe in napaka zunanje storitve
+#### Spending cap and external service error
 
 ```json
 {
@@ -765,9 +765,9 @@ Vsi napačni odgovori so JSON. Polje `error` je kratek strojno berljiv razlog, `
 }
 ```
 
-V obeh primerih je plačilo že evidentirano, zato odgovor vsebuje dokazni žeton. Pri **503** je žeton izdan, a še **ni** porabljen - klient ga lahko unovči kasneje po postopku iz 3.5. Pri **502** je bil žeton porabljen že pred klicem storitve, zato ponovno unovčenje ni mogoče; služi le kot dokazilo o opravljenem plačilu.
+In both cases the payment is already on record, so the response carries a proof token. With **503** the token is issued but **not** yet consumed - the client can redeem it later using the procedure in 3.5. With **502** the token was consumed before the service call, so it cannot be redeemed again; it only serves as proof that the payment was made.
 
-#### Nepričakovana napaka
+#### Unexpected error
 
 ```json
 { "error": "Internal server error" }
@@ -780,51 +780,51 @@ V obeh primerih je plačilo že evidentirano, zato odgovor vsebuje dokazni žeto
 ### 7.1 Request ID Security
 
 - **Uniqueness:** UUID v4 ensures 2^122 possible values (collision probability ≈ 0)
-- **Unpredictability:** Cryptographically random, ni mogoče predvideti
-- **Expiration:** `PAYMENT_REQUEST_TTL_SECONDS` (privzeto 1800 s); potekle vrstice pobriše periodični čistilec (vsakih 60 s)
-- **Vezava na plačnika:** če je bil ob izdaji 402 podan veljaven `X-Payer`, se plačilna zahteva veže nanj
+- **Unpredictability:** Cryptographically random, impossible to guess
+- **Expiration:** `PAYMENT_REQUEST_TTL_SECONDS` (default 1800 s); expired rows are deleted by a periodic cleaner (every 60 s)
+- **Payer binding:** if a valid `X-Payer` was supplied when the 402 was issued, the payment request is bound to that address
 
 ### 7.2 Proof Token Security
 
 - **Format:** `"proof_"` prefix + UUID v4
-- **Storage:** SQLite (`payment_proofs`), torej preživi ponovni zagon strežnika
-- **Lifetime:** `PROOF_TOKEN_TTL_SECONDS` (privzeto 600 s)
-- **Enkratnost:** pogoj `consumed_at IS NULL` je del stavka `UPDATE`, zato lahko žeton porabi le ena zahteva; vzporedna dobi 409
-- **Validation:** Server-side only, klient ne more ponarejati
-- **Bearer credential:** kdor prestreže žeton, ga lahko unovči - zato je TLS obvezen za javno rabo
+- **Storage:** SQLite (`payment_proofs`), so it survives a server restart
+- **Lifetime:** `PROOF_TOKEN_TTL_SECONDS` (default 600 s)
+- **Single use:** the `consumed_at IS NULL` condition is part of the `UPDATE` statement, so only one request can consume the token; a concurrent one gets 409
+- **Validation:** Server-side only, the client cannot forge one
+- **Bearer credential:** whoever intercepts the token can redeem it - which is why TLS is mandatory for public use
 
 ### 7.3 Replay Protection
 
-- Vsak `txHash` je lahko unovčen **samo enkrat**: primarni ključ tabele `redeemed_tx_hashes`
-- Hash se pred preverjanjem normalizira v male črke, da obhod z drugačno velikostjo črk ni mogoč
-- Tekmovanje med hkratnima zahtevama ujame kršitev primarnega ključa (`SQLITE_CONSTRAINT_PRIMARYKEY` → 400 `Transaction already redeemed`)
+- Each `txHash` can be redeemed **only once**: the primary key of the `redeemed_tx_hashes` table
+- The hash is normalised to lowercase before the check, so a different-case bypass is impossible
+- A race between two simultaneous requests is caught by the primary key violation (`SQLITE_CONSTRAINT_PRIMARYKEY` → 400 `Transaction already redeemed`)
 
 ### 7.4 Blockchain Security
 
-- **Immutability:** Transakcije so ireverzibilne
-- **Public Verification:** Vsak lahko preveri TX na javnem raziskovalcu blokov
-- **No Chargebacks:** Plačilo ni mogoče razveljaviti
-- **Gas Fees:** Klient plača gas (dodatni strošek)
-- **Confirmation Depth:** `MIN_CONFIRMATIONS` (privzeto 1) določa, koliko blokov globoko mora biti transakcija
+- **Immutability:** Transactions are irreversible
+- **Public Verification:** Anyone can check the TX in a public block explorer
+- **No Chargebacks:** A payment cannot be undone
+- **Gas Fees:** The client pays gas (an additional cost)
+- **Confirmation Depth:** `MIN_CONFIRMATIONS` (default 1) sets how many blocks deep the transaction must be
 
-### 7.5 Transport in Aplikacijska Zaščita
+### 7.5 Transport and Application Security
 
-**Recommendation:** HTTPS (TLS 1.2+) za vso HTTP komunikacijo
+**Recommendation:** HTTPS (TLS 1.2+) for all HTTP communication
 
 ```
 Client ◄─────TLS encrypted─────► Server
 ```
 
-Testno okolje teče po navadnem HTTP, ker mora biti promet berljiv za zajem z Wiresharkom. Za javno postavitev je priložen obratni posrednik s TLS.
+The test environment runs over plain HTTP because the traffic has to stay readable for the Wireshark capture. A TLS-terminating reverse proxy is included for public deployment.
 
-Dodatni mehanizmi v implementaciji:
-- **`helmet`** s CSP (dovoljeni viri skript in `connect-src` za RPC vozlišča)
-- **CORS** - v produkciji omejen s seznamom `ALLOWED_ORIGINS`
-- **Rate limiting** - `GET /service` privzeto 30 zahtev/min, `POST /service` 10 zahtev/min (okno 60 s)
-- **Omejitev telesa zahteve** - 64 kB
-- **Validacija vhodov** - `zod` sheme pred vsakim dostopom do baze ali verige
-- **Dnevna zgornja meja stroškov** - `OPENAI_DAILY_USD_CAP` ščiti pred izčrpanjem sredstev za zunanjo storitev
-- **Beleženje z redakcijo** - `pino` odstrani zasebne ključe in avtorizacijske glave iz dnevnika
+Additional mechanisms in the implementation:
+- **`helmet`** with CSP (allowed script sources and `connect-src` for RPC nodes)
+- **CORS** - restricted in production by the `ALLOWED_ORIGINS` list
+- **Rate limiting** - `GET /service` 30 requests/min by default, `POST /service` 10 requests/min (60 s window)
+- **Request body limit** - 64 kB
+- **Input validation** - `zod` schemas before any database or chain access
+- **Daily cost cap** - `OPENAI_DAILY_USD_CAP` guards against draining the funds for the external service
+- **Redacting logger** - `pino` strips private keys and authorisation headers from the log
 
 ---
 
@@ -832,53 +832,53 @@ Dodatni mehanizmi v implementaciji:
 
 ### 8.1 Latency
 
-Okvirne vrednosti (odvisne od omrežja, RPC vozlišča in zunanje storitve):
+Indicative values (they depend on the network, the RPC node and the external service):
 
 | Operation | Latency | Notes |
 |-----------|---------|-------|
-| GET /service (brez žetona) | ~10 ms | vpis plačilne zahteve v SQLite |
-| Blockchain TX confirmation | 15-30 s | odvisno od omrežja, poteka izven HTTP |
-| POST /service (združena izmenjava) | ~0,5 s + čas storitve | 2-3 klici JSON-RPC, nato klic plačljive storitve |
-| POST /service (`MOCK_VERIFY`) | ~10 ms | brez branja verige |
-| GET /service (z X-Payment) | ~5 ms | poizvedba v SQLite |
+| GET /service (no token) | ~10 ms | writes the payment request to SQLite |
+| Blockchain TX confirmation | 15-30 s | depends on the network, happens outside HTTP |
+| POST /service (merged exchange) | ~0.5 s + service time | 2-3 JSON-RPC calls, then the paid service call |
+| POST /service (`MOCK_VERIFY`) | ~10 ms | no chain read |
+| GET /service (with X-Payment) | ~5 ms | SQLite query |
 
-### 8.2 Učinek Združitve
+### 8.2 Effect of Merging
 
-| Zasnova | Pari zahteva/odgovor | Sporočila HTTP |
-|---------|----------------------|----------------|
-| Ločena verifikacija in dostava | 3 | 6 |
-| **Združena izmenjava (ta implementacija)** | **2** | **4** |
-| Združena izmenjava + neobvezni `--ack` | 3 | 6 |
+| Design | Request/response pairs | HTTP messages |
+|--------|------------------------|---------------|
+| Separate verification and delivery | 3 | 6 |
+| **Merged exchange (this implementation)** | **2** | **4** |
+| Merged exchange + optional `--ack` | 3 | 6 |
 
-Združitev prihrani eno celotno povratno pot HTTP in en prehod skozi omejevalnik pogostosti; verifikacijskih klicev na verigo ne zmanjša.
+Merging saves one full HTTP round trip and one pass through the rate limiter; it does not reduce the number of verification calls to the chain.
 
 ### 8.3 Throughput
 
-- **RPC Rate Limits:** javna vozlišča omejujejo število zahtev; verifikacija porabi 2-3 klice
-- **Server Capacity:** omejuje predvsem RPC in zunanja storitev, ne CPU strežnika
-- **Proof/Request Lookup:** indeksirane poizvedbe SQLite, brez ozkega grla
+- **RPC Rate Limits:** public nodes cap the number of requests; verification spends 2-3 calls
+- **Server Capacity:** bounded by the RPC and the external service rather than by server CPU
+- **Proof/Request Lookup:** indexed SQLite queries, no bottleneck
 
 ### 8.4 Scalability
 
-**Trenutna implementacija:**
-- SQLite (WAL) na lokalnem disku: ena instanca strežnika
-- Stanje preživi ponovni zagon
-- Ni horizontalnega skaliranja
+**Current implementation:**
+- SQLite (WAL) on the local disk: a single server instance
+- State survives a restart
+- No horizontal scaling
 
 **Production Recommendations:**
-- Skupna baza (npr. PostgreSQL) ali Redis za dokazne žetone pri več instancah
-- Load balancer za multiple instances
-- Zasebno/plačljivo RPC vozlišče namesto javnega
+- A shared database (e.g. PostgreSQL) or Redis for proof tokens across several instances
+- Load balancer for multiple instances
+- A private/paid RPC node instead of a public one
 
 ---
 
 ## 9. PROTOCOL EXTENSIONS (Future)
 
-Naslednje razširitve **niso implementirane** in so navedene kot možna nadaljevanja.
+The extensions below are **not implemented**; they are listed as possible follow-up work.
 
 ### 9.1 Subscription Support
 
-Omogoči plačilo za časovno obdobje (npr. 30 dni dostopa):
+Enables payment for a period of time (e.g. 30 days of access):
 
 ```json
 {
@@ -892,7 +892,7 @@ Omogoči plačilo za časovno obdobje (npr. 30 dni dostopa):
 
 ### 9.2 Refund Protocol
 
-Reverse payment v primeru napake:
+Reverse a payment when something goes wrong:
 
 ```json
 POST /refund
@@ -928,9 +928,9 @@ POST /refund
 
 ### 10.2 Best Practices
 
-✅ RESTful API design (en vir, dve metodi)  
-✅ Stateless HTTP (stanje samo v plačilnih zahtevah in žetonih)  
-✅ Idempotent operations kjer mogoče (ponovitev `txHash` je zavrnjena)  
+✅ RESTful API design (one resource, two methods)  
+✅ Stateless HTTP (state only in payment requests and tokens)  
+✅ Idempotent operations where possible (a repeated `txHash` is rejected)  
 ✅ Clear error messages  
 ✅ Structured logging  
 
@@ -947,16 +947,16 @@ POST /refund
 **Minimum Requirements:**
 - Node.js >= 20.0
 - Internet connection (RPC access)
-- Ethereum wallet (klient)
-- ETH za gas fees (klient)
+- Ethereum wallet (client)
+- ETH for gas fees (client)
 
-**Datotečna struktura, ki jo pokriva ta specifikacija:**
+**File structure covered by this specification:**
 
 ```
-server/server.js   HTTP vmesnik: 402, združena izmenjava, potrditev, /config, /health
+server/server.js   HTTP interface: 402, merged exchange, acknowledgement, /config, /health
 server/db.js       SQLite: payment_requests, payment_proofs, redeemed_tx_hashes, openai_usage
-server/public/     spletni odjemalec (MetaMask), izvede isti potek
-klient/run.js      odjemalec CLI (mock in realni način, zastavica --ack)
+server/public/     web client (MetaMask), runs the same flow
+client/run.js      CLI client (mock and real mode, --ack flag)
 ```
 
 ---
@@ -976,15 +976,15 @@ klient/run.js      odjemalec CLI (mock in realni način, zastavica --ack)
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.0 | Januar 2026 | Initial specification (ločena verifikacija in dostava, 3 pari sporočil) |
-| 2.0 | Avgust 2026 | Združena izmenjava: `POST /service` preveri plačilo **in** dostavi vsebino; potek skrajšan na 2 para (4 sporočila); `GET /service` z `X-Payment` postane neobvezna potrditev; trajno shranjevanje v SQLite, zaščita pred ponovitvijo, enkratni dokazni žetoni |
+| 1.0 | January 2026 | Initial specification (separate verification and delivery, 3 message pairs) |
+| 2.0 | August 2026 | Merged exchange: `POST /service` verifies the payment **and** delivers the content; the flow is shortened to 2 pairs (4 messages); `GET /service` with `X-Payment` becomes an optional acknowledgement; persistent SQLite storage, replay protection, single-use proof tokens |
 
 ---
 
 ## 14. AUTHOR
 
 **Name:** Tim Heinzer  
-**Date:** Avgust 2026  
+**Date:** August 2026  
 
 ---
 

@@ -1,26 +1,26 @@
-# Produkcijska namestitev mape 05_spletisce: Node aplikacija + Caddy s TLS.
-# docs/IDENTITETA.md §2, izboljšava A.  Vzorec je enak kot testna-okolja/00_demo/server.
+# Production deployment of the 05_website_direct folder: Node app + Caddy with TLS.
+# docs/IDENTITY.md §2, improvement A.  The pattern is the same as test-environments/00_demo/server.
 #
 #   cp .env.example .env
 #   cp wallet.example.json wallet.json
-#   # v Caddyfile vpiši svojo domeno
+#   # enter your domain in the Caddyfile
 #   docker compose up -d
 #
-# Za Wireshark dokaze: odkomentiraj `ports` pri storitvi x402-spletisce in
-# dostopaj po http://<IP>:8080 (mimo TLS) — glej ../../README.md.
+# For Wireshark proof: uncomment `ports` on the x402-website-direct service and
+# access it via http://<IP>:8080 (bypassing TLS) — see ../../README.md.
 #
-# NE nastavljaj COOKIE_SECURE=true, če boš uporabljal tudi ta odprti HTTP dostop:
-# brskalnik piškotka z zastavico `Secure` po navadnem HTTP ne shrani, zato bi se
-# prijava vrtela v krogu. Privzeto zaznavanje je pravo za oboje — izza Caddyja
-# (X-Forwarded-Proto: https) `Secure` doda samodejno, na vratih 8080 pa ne.
+# Do NOT set COOKIE_SECURE=true if you will also use this open HTTP access:
+# the browser will not store a cookie with the `Secure` flag over plain HTTP, so
+# the login would go round in circles. The default detection is right for both —
+# behind Caddy (X-Forwarded-Proto: https) it adds `Secure` automatically, on port 8080 it does not.
 
 name: x402-neposredno
 
 services:
-  x402-spletisce-neposredno:
+  x402-website-direct:
     build: .
-    image: x402-spletisce-neposredno:latest
-    container_name: x402-spletisce-neposredno
+    image: x402-website-direct:latest
+    container_name: x402-website-direct
     restart: unless-stopped
     env_file:
       - .env
@@ -29,7 +29,7 @@ services:
       - ./wallet.json:/app/wallet.json:ro
     expose:
       - "8080"
-    # Odkomentiraj samo za zajem po navadnem HTTP (LAN/loopback):
+    # Uncomment only for capture over plain HTTP (LAN/loopback):
     # ports:
     #   - "8080:8080"
     networks:
@@ -47,7 +47,7 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
-      - x402-spletisce-neposredno
+      - x402-website-direct
     networks:
       - x402-net
 

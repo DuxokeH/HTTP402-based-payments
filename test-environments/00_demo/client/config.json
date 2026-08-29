@@ -4,5 +4,5 @@
   "ENDPOINT": "/service",
   "NETWORK": "sepolia",
   "RPC_URL": "https://ethereum-sepolia-rpc.publicnode.com",
-  "_opomba": "Za zajem v Wiresharku uporabi http:// (brez TLS). Za LAN demo z drugega stroja nastavi MERCHANT_URL na http://<IP-streznika>:3000. Združeni tok ima na žici natanko DVA para zahteva/odgovor."
+  "_note": "For capture in Wireshark use http:// (no TLS). For a LAN demo from another machine set MERCHANT_URL to http://<server-IP>:3000. The merged flow has exactly TWO request/response pairs on the wire."
 }

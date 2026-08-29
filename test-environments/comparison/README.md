@@ -1,112 +1,112 @@
-# Primerjava — združene slike scenarijev 02 in 03
+# Comparison — combined figures for scenarios 02 and 03
 
-Ta mapa ne izvaja nobene meritve. Prebere CSV datoteke, ki nastanejo v mapah
-[`../02_avtomatska_placila_transakcije`](../02_avtomatska_placila_transakcije) in
-[`../03_avtomatska_placila_dobroimetje`](../03_avtomatska_placila_dobroimetje), ter iz njih
-nariše primerjalne slike: koliko stane N uporab, če vsaka zahteva svojo on-chain
-transakcijo, proti modelu z eno polnitvijo in N podpisanimi bremenitvami.
+This folder performs no measurements of its own. It reads the CSV files produced in
+[`../02_machine_payments_per_request`](../02_machine_payments_per_request) and
+[`../03_machine_payments_prepaid`](../03_machine_payments_prepaid) and draws comparison
+figures from them: what N uses cost when each one requires its own on-chain
+transaction, versus a model with a single top-up and N signed debits.
 
-## Kaj primerja
+## What it compares
 
-| Slika | Kaj pokaže |
+| Figure | What it shows |
 |---|---|
-| `01_kumulativni_strosek.png` | kumulativni strošek poravnave v odvisnosti od N — naraščajoča premica proti skoraj ravni črti |
-| `02_amortizacija.png` | efektivni on-chain strošek na zahtevo (strošek polnitve, deljen z N) |
-| `03_latenca_primerjava.png` | latenca on-chain poizvedbe proti off-chain podpisani bremenitvi (logaritemska skala) |
-| `04_tabela_stroskov.png` + `primerjava_stroskov.csv` | število poravnav in strošek pri izbranih N |
+| `01_cumulative_cost.png` | cumulative settlement cost as a function of N — a rising straight line against an almost flat one |
+| `02_amortization.png` | effective on-chain cost per request (the top-up cost divided by N) |
+| `03_latency_comparison.png` | latency of an on-chain query versus an off-chain signed debit (logarithmic scale) |
+| `04_cost_table.png` + `cost_comparison.csv` | the number of settlements and the cost at selected values of N |
 
-## Zahteve
+## Requirements
 
 - Python ≥ 3.9
-- Paketi iz `requirements.txt` (`matplotlib`, `pandas`, `numpy`)
+- The packages from `requirements.txt` (`matplotlib`, `pandas`, `numpy`)
 
-Ničesar drugega ni treba — vse podatke skripte preberejo iz že zagnanih scenarijev.
+Nothing else is needed — the scripts read all their data from scenarios you have already run.
 
-## Namestitev
+## Installation
 
 ```bash
-cd testna-okolja/primerjava
+cd test-environments/comparison
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Zagon
+## Running
 
-Skripte pot do map razrešijo same, zato jih zaženeš iz te mape brez dodatnih argumentov.
+The scripts resolve the folder paths themselves, so you run them from this folder with no extra arguments.
 
-### Z lastnimi meritvami (priporočeno)
+### With your own measurements (recommended)
 
-Najprej zaženi scenarija 02 in 03 (glej njuna README), da nastaneta
-`transakcije_*.csv` in `dobroimetje_*.csv`, nato:
-
-```bash
-python3 primerjava.py
-```
-
-Skripta poišče najprej `*_real.csv`, nato `*_mock.csv`.
-
-### Brez meritev — simulirani vzorec za predogled
-
-Če želiš samo videti, kako slike izgledajo, si lahko vhodne podatke ustvariš:
+First run scenarios 02 and 03 (see their READMEs) so that `transactions_*.csv` and `credit_*.csv`
+are produced, then:
 
 ```bash
-python3 generiraj_vzorec.py    # zapiše simulirane CSV v ../0X_*/meritve/_vzorec/
-python3 primerjava.py          # če pravih meritev ni, samodejno uporabi vzorec
+python3 comparison.py
 ```
 
-> **Pozor:** te številke so **izmišljene**. Slike, narisane iz vzorca, nosijo rdeč vodni žig
-> „SIMULIRANI PRIMER — NE PRAVE MERITVE". Kot rezultat navajaj samo slike iz lastnih
-> meritev.
+The script looks for `*_real.csv` first, then `*_mock.csv`.
 
-### Primerjava z uradnim protokolom x402
+### Without measurements — a simulated sample for previewing
+
+If you only want to see what the figures look like, you can generate the input data yourself:
 
 ```bash
-python3 primerjava_x402.py --nacin mock     # ali --nacin real
+python3 generate_sample.py    # writes simulated CSVs to ../0X_*/measurements/_sample/
+python3 comparison.py          # if there are no real measurements, it falls back to the sample
 ```
 
-Bere datoteke `x402_*.csv`, ki nastanejo pri zagonih z zastavico `--x402` (glej
-[uradni protokol x402 v2](../README.md#uradni-protokol-x402-v2)), in jih postavi ob rezultate lastnega protokola. Skripta ob
-vsakem zagonu izpiše metodološko opozorilo, ki je vžgano tudi v sliko: kraka si delita
-omrežje in denominacijo, razlikujeta pa se v protokolu, vrsti transakcije in plačniku gasa —
-razlik torej ni mogoče pripisati zgolj protokolu x402.
+> **Caution:** these numbers are **made up**. Figures drawn from the sample carry a red watermark
+> reading “SIMULATED EXAMPLE — NOT REAL MEASUREMENTS”. Only ever cite figures from your own
+> measurements as results.
 
-## Uporabni argumenti
+### Comparison with the official x402 protocol
 
-| Argument | Skripta | Privzeto | Pomen |
+```bash
+python3 comparison_x402.py --mode mock     # or --mode real
+```
+
+This reads the `x402_*.csv` files produced by runs with the `--x402` flag (see
+[the official x402 v2 protocol](../README.md#official-x402-v2-protocol)), and places them alongside the results of this project's
+own protocol. On every run the script prints a methodological caveat, which is also burned into the
+figure: the two branches share the network and the denomination, but differ in protocol, transaction
+type and who pays the gas — so the differences cannot be attributed to the x402 protocol alone.
+
+## Useful arguments
+
+| Argument | Script | Default | Meaning |
 |---|---|---|---|
-| `--horizon N` | `primerjava.py` | 50 | do katerega N sega graf |
-| `--gas-price-gwei` | `primerjava.py` | 2.0 | cena gasa, kadar je v CSV ni (mock) |
-| `--gas-per-tx` | `primerjava.py` | 21000 | enote gasa za navadni prenos ETH |
-| `--out` | `primerjava.py` | `slike/` | ciljna mapa slik |
-| `--vzorec` | obe | — | doda vodni žig „SIMULIRANI PRIMER" |
-| `--nacin` | `primerjava_x402.py` | `mock` | `mock` ali `real` |
+| `--horizon N` | `comparison.py` | 50 | how far along N the chart extends |
+| `--gas-price-gwei` | `comparison.py` | 2.0 | gas price to assume when the CSV has none (mock) |
+| `--gas-per-tx` | `comparison.py` | 21000 | gas units for a plain ETH transfer |
+| `--out` | `comparison.py` | `figures/` | target folder for the figures |
+| `--sample` | both | — | adds the “SIMULATED EXAMPLE” watermark |
+| `--mode` | `comparison_x402.py` | `mock` | `mock` or `real` |
 
-Če v CSV ni podatkov o dejanskem gasu (mock način), se strošek **modelira** iz zgornjih
-dveh argumentov; slike to izrecno označijo.
+If the CSV holds no actual gas data (mock mode), the cost is **modelled** from the two arguments
+above; the figures say so explicitly.
 
-## Pričakovani izhodi
+## Expected outputs
 
-Vse nastane v `slike/` (mapa se ustvari sama): štiri slike PNG iz zgornje tabele in
-`primerjava_stroskov.csv`. Mapa `slike/` je v `.gitignore` — rezultati so tvoji, ne del
-repozitorija.
+Everything lands in `figures/` (the folder is created automatically): the four PNG figures from the
+table above and `cost_comparison.csv`. `figures/` is listed in `.gitignore` — the results are yours,
+not part of the repository.
 
-## Datoteke
+## Files
 
 ```
-primerjava.py         glavne primerjalne slike (scenarija 02 in 03)
-primerjava_x402.py    primerjava lastnega protokola z uradnim x402
-generiraj_vzorec.py   ustvari simulirane vhodne CSV za predogled
-slog.py               skupni slog matplotlib (barvno slepim varna paleta, slovenske oznake)
-requirements.txt      Python odvisnosti
+comparison.py         the main comparison figures (scenarios 02 and 03)
+comparison_x402.py    comparison of this project's own protocol with official x402
+generate_sample.py    creates simulated input CSVs for previewing
+style.py              shared matplotlib style (colour-blind-safe palette, localised labels)
+requirements.txt      Python dependencies
 ```
 
-`slog.py` je namerno podvojen v vseh mapah `analiza/`, da je vsaka mapa samostojno
-zaženljiva.
+`style.py` is duplicated on purpose across all the `analysis/` folders, so that each folder can be
+run on its own.
 
-## Odpravljanje težav
+## Troubleshooting
 
-- **„Manjkajo CSV meritve"** — najprej zaženi scenarija 02 in 03, ali si ustvari vzorec z
-  `generiraj_vzorec.py`.
-- Za splošni pregled, vrstni red poskusov in higieno meritev glej
-  [`testna-okolja/README.md`](../README.md).
+- **“CSV measurements are missing”** — run scenarios 02 and 03 first, or create a sample with
+  `generate_sample.py`.
+- For a general overview, the recommended experiment order and measurement hygiene, see
+  [`test-environments/README.md`](../README.md).

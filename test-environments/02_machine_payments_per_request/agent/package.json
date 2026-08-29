@@ -1,5 +1,5 @@
 {
-  "name": "x402-iot-agent-transakcije",
+  "name": "x402-iot-agent-per-request",
   "version": "1.0.0",
   "description": "Consumer agent paying one on-chain tx per IoT reading (expensive per-payment baseline)",
   "type": "commonjs",

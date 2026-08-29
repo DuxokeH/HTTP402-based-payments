@@ -2,7 +2,7 @@
   "name": "x402-wallet-generator",
   "version": "1.0.0",
   "type": "module",
-  "description": "Generator Ethereum denarnic za X402 protokol",
+  "description": "Generator Ethereum denarnic za X402 protocol",
   "main": "generate-wallet.js",
   "dependencies": {
     "ethers": "^6.9.0"

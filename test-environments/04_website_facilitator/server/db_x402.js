@@ -1,33 +1,33 @@
 'use strict';
 
 /**
- * SQLite shramba za NOVE x402 v2 načine (idempotenca + stanje poravnav + seje).
+ * SQLite storage for the NEW x402 v2 modes (idempotency + settlement state + sessions).
  *
- * NAMENOMA ločena datoteka in ločena baza (`data/x402_placila.db`):
- *  - obstoječe tabele in baze merjenih poskusov ostanejo bajt-za-bajtom nespremenjene,
- *  - ta modul je bajt-identičen v vseh mapah (kot auth.js) — en md5 za vse kopije,
- *  - brez migracij: CREATE TABLE IF NOT EXISTS na svoji datoteki.
+ * DELIBERATELY a separate file and a separate database (`data/x402_payments.db`):
+ *  - the existing tables and databases of the measured experiments stay byte-for-byte unchanged,
+ *  - this module is byte-identical across all folders (like auth.js) — one md5 for all copies,
+ *  - no migrations: CREATE TABLE IF NOT EXISTS on its own file.
  *
- * ŽELEZNO PRAVILO: nobena funkcija, podana v db.transaction, ni async in ne
- * vsebuje await. better-sqlite3 je sinhron; transakcija, ki bi objela await,
- * bi se tiho zaprla pred razrešitvijo obljube. Vsi await-i živijo IZVEN
- * transakcij (glej x402.js).
+ * IRON RULE: no function passed to db.transaction is async or contains
+ * await. better-sqlite3 is synchronous; a transaction that wrapped an await
+ * would silently close before the promise resolves. All awaits live OUTSIDE
+ * transactions (see x402.js).
  *
- * Statusni stroj poravnave (x402_payments.status):
- *   SETTLING       — lastnik zahteve poravnava (zakup `lease_until`)
- *   BROADCAST      — poslano na verigo, potrdilo še ni znano (tx_hash zabeležen PRED čakanjem)
- *   SETTLED        — uspešno poravnano
- *   SETTLED_UNVERIFIED — pooblastilo dokazano porabljeno na verigi, hash izgubljen
- *   FAILED         — dokončno neuspešno (error_retryable=0) ali varno ponovljivo (=1)
- *   INDETERMINATE  — izid neznan; razreši ga uskladitev, nikoli slepa ponovna oddaja
+ * Settlement status machine (x402_payments.status):
+ *   SETTLING       — the request owner is settling (lease `lease_until`)
+ *   BROADCAST      — sent to the chain, confirmation not yet known (tx_hash recorded BEFORE waiting)
+ *   SETTLED        — settled successfully
+ *   SETTLED_UNVERIFIED — authorization provably spent on chain, hash lost
+ *   FAILED         — definitively failed (error_retryable=0) or safely retryable (=1)
+ *   INDETERMINATE  — outcome unknown; resolved by reconciliation, never by blind re-submission
  *
- * Zneski: `amount_atomic` so ATOMSKE ENOTE sredstva (testni ETH: 18 decimalk,
- * torej wei; USDC bi imel 6) kot celoštevilski niz in nikoli float.
+ * Amounts: `amount_atomic` values are ATOMIC UNITS of the asset (test ETH: 18 decimals,
+ * i.e. wei; USDC would have 6) as an integer string and never a float.
  *
- * Kriptografsko avtoritativna zaščita pred ponovno uporabo (replay) JE
- * EIP-3009 nonce v pogodbi žetona na verigi. Tabela x402_authorizations je
- * samo lokalni hitri filter + revizijska sled; x402_payments je aplikacijska
- * idempotenca, vezava na vir in obnova po izgubljenem odgovoru.
+ * The cryptographically authoritative replay protection IS the
+ * EIP-3009 nonce in the token contract on chain. The x402_authorizations table
+ * is only a local fast filter + audit trail; x402_payments provides application-level
+ * idempotency, binding to the resource, and recovery after a lost response.
  */
 
 const Database = require('better-sqlite3');
@@ -37,7 +37,7 @@ const path = require('path');
 const DATA_DIR = path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const DB_PATH = process.env.X402_DB_PATH || path.join(DATA_DIR, 'x402_placila.db');
+const DB_PATH = process.env.X402_DB_PATH || path.join(DATA_DIR, 'x402_payments.db');
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
@@ -82,10 +82,10 @@ db.exec(`
     first_seen INTEGER NOT NULL
   );
 
-  -- Seje z dobroimetjem v atomskih enotah sredstva (mapi 03 in 05/04 — drugod tabeli mirujeta).
-  -- Zavestno LOČENI od obstoječih tabel sessions/session_events: tam so zneski
-  -- v wei (ETH), tu v atomskih enotah žetona. Mešanje enot v istih stolpcih je
-  -- točno tista napaka, ki se ji ta projekt izogiba.
+  -- Sessions with credit in atomic units of the asset (folders 03 and 05/04 — elsewhere these tables sit idle).
+  -- Deliberately SEPARATE from the existing sessions/session_events tables: there the
+  -- amounts are in wei (ETH), here in atomic units of the token. Mixing units in the
+  -- same columns is exactly the mistake this separation avoids.
   CREATE TABLE IF NOT EXISTS x402_sessions (
     session_id     TEXT PRIMARY KEY,
     payer_address  TEXT NOT NULL,
@@ -177,9 +177,9 @@ const S = {
 };
 
 /**
- * Zakup pravice do poravnave — ENA sinhrona transakcija (BEGIN IMMEDIATE, ker
- * bere in piše; dva procesa nad isto datoteko se tako ne moreta zakleniti).
- * Vrne { outcome, row }:
+ * Lease of the right to settle — ONE synchronous transaction (BEGIN IMMEDIATE,
+ * since it reads and writes; two processes over the same file thus cannot deadlock).
+ * Returns { outcome, row }:
  *   OWNER | CACHED | CONFLICT_RESOURCE | CONFLICT_PAYLOAD | BUSY |
  *   TERMINAL | RECONCILE | INDETERMINATE
  */
@@ -217,10 +217,10 @@ const claimPayment = db.transaction((a) => {
       return { outcome: 'INDETERMINATE', row };
   }
 });
-// beri-nato-piši → IMMEDIATE, da med procesoma ni nadgradnje zaklepa v slepi ulici
+// read-then-write → IMMEDIATE, so there is no deadlocking lock upgrade between the two processes
 const claimPaymentImmediate = (a) => claimPayment.immediate(a);
 
-/** Ali je bilo to EIP-3009 pooblastilo že videno z DRUGIM payment_id? */
+/** Has this EIP-3009 authorization already been seen with a DIFFERENT payment_id? */
 function checkAuthorization(authKey, paymentId) {
   S.insAuth.run(authKey, paymentId, Date.now());
   const row = S.getAuth.get(authKey);
@@ -241,13 +241,13 @@ function markFailed(paymentId, { code, message, retryable }) {
   return S.markFailed.run(code || 'settlement_failed', (message || '').slice(0, 500),
     retryable ? 1 : 0, Date.now(), paymentId).changes === 1;
 }
-// Pooblastilo dokazano NEporabljeno → vrstica postane varno ponovljiva:
-// FAILED z error_retryable=1 in poteklim zakupom, da jo naslednji claim
-// prevzame kot OWNER in poravna znova (to NI slepa ponovna oddaja — stanje
-// na verigi je bilo prebrano).
+// Authorization provably UNspent → the row becomes safely retryable:
+// FAILED with error_retryable=1 and an expired lease, so the next claim
+// takes it over as OWNER and settles again (this is NOT a blind re-submission —
+// the on-chain state has been read).
 const stmtToRetryable = db.prepare(`
   UPDATE x402_payments SET status='FAILED', error_code='reconciled_unused',
-    error_message='pooblastilo na verigi neporabljeno', error_retryable=1,
+    error_message='authorization unspent on chain', error_retryable=1,
     lease_until=0, updated_at=?
   WHERE payment_id=? AND status IN ('BROADCAST','INDETERMINATE','SETTLING')`);
 function reclaimAfterProvenUnused(paymentId) {
@@ -272,7 +272,7 @@ function x402Sweep() {
   return { zakupi: l.changes, stara_placila: d.changes, seje: s.changes, dogodki: e.changes };
 }
 
-// ── seje z dobroimetjem v atomskih enotah (mapa 03 in spletišči) ─────────────
+// ── credit sessions in atomic units (folder 03 and the websites) ─────────────
 function openX402Session(args) {
   S.insSession.run({ ...args, now: Date.now() });
   S.insEvent.run(args.sessionId, 'topup', args.depositAtomic, args.settleTxHash, null, null, null, Date.now());
@@ -282,10 +282,10 @@ function getX402Session(sessionId) { return S.getSession.get(sessionId) || null;
 function countX402Debits(sessionId) { return S.countSessionEvents.get(sessionId).n; }
 
 /**
- * Atomska bremenitev x402-financirane seje. ISTI logični algoritem kot
- * db.debit() v mapi 03 (nonce → seja → zaprta → potekla → dobroimetje →
- * proračun → atomski odpis), le v atomskih enotah žetona. Razlogi za
- * zavrnitev so ISTI nizi kot v izvirniku, da se varnostni testi prenesejo.
+ * Atomic debit of an x402-funded session. The SAME logical algorithm as
+ * db.debit() in folder 03 (nonce → session → closed → expired → credit →
+ * budget → atomic deduction), only in atomic units of the token. The rejection
+ * reasons are the SAME strings as in the original, so the security tests carry over.
  */
 const debitX402 = db.transaction(({ sessionId, amountAtomic, nonce, requestPath, bytes }) => {
   if (S.isNonceUsed.get(nonce)) return { ok: false, reason: 'nonce_reused' };

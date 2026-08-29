@@ -3,35 +3,36 @@
 
 /**
  * ============================================================================
- *  MERILNI AGENT — POSREDNIŠKA VEJA (topologija (b))
- *  (mapa 04_spletisce_posrednik/agent)
+ *  MEASUREMENT AGENT — FACILITATOR BRANCH (topology (b))
+ *  (folder 04_website_facilitator/agent)
  * ============================================================================
  *
- *  Zunanji plačnik, ki merjeno prehodi posredniški protokol. Ker teče kot LOČEN
- *  proces (ne v strežniku kot `runner.js`), z njim lahko dokažeš tudi, da
- *  trgovec verige res ne potrebuje: trgovcu nastavi pokvarjen `RPC_URL`,
- *  agentu pa pravega — plačila morajo še vedno delovati.
+ *  An external payer that walks the facilitator protocol under measurement. Because it
+ *  runs as a SEPARATE process (not inside the server like `runner.js`), it also lets you
+ *  prove that the merchant really does not need the chain: give the merchant a broken
+ *  `RPC_URL` and the agent a working one — payments must still go through.
  *
- *  Dva naslova, ker sta v tej topologiji dve nasprotni strani:
- *    --merchant-url    trgovec  (402 izziv, dostop do vira, merjene bremenitve)
- *    --posrednik-url   posrednik (prijava plačila, dokazni žeton)
+ *  Two URLs, because this topology has two opposing sides:
+ *    --merchant-url    merchant  (402 challenge, resource access, metered debits)
+ *    --facilitator-url   facilitator (payment report, proof token)
  *
- *  POSKUSI:
- *    plačilo na odčitek, mock   node agent.js --mock --tx --queries 20
- *    plačilo na odčitek, real   node agent.js --real --tx --queries 20     (Sepolia)
- *    merjena seja               node agent.js --mock --merjeno --debits 20
- *                               node agent.js --real --merjeno --debits 20
- *    štetje sporočil            ./count-proxy.js (glej ../README.md)
- *    varnostni testi            node agent.js --security   (5 popravljenih napak + zloraba)
+ *  EXPERIMENTS:
+ *    payment per reading, mock  node agent.js --mock --tx --queries 20
+ *    payment per reading, real  node agent.js --real --tx --queries 20     (Sepolia)
+ *    metered session            node agent.js --mock --metered --debits 20
+ *                               node agent.js --real --metered --debits 20
+ *    message counting           ./count-proxy.js (see ../README.md)
+ *    security tests             node agent.js --security   (5 fixed bugs + abuse)
  *
- *  Vsaka vrstica CSV loči TRI čase, ker se prav v tem loči od neposredne veje:
- *    t_*_ms          kar meri odjemalec (celoten obhod)
- *    trgovec_*_ms    `X-Server-Ms` — koliko je porabil trgovec
- *    posrednik_*_ms  `X-Downstream-Ms` — koliko od tega je bilo čakanje na posrednika
- *  V neposredni veji je zadnji stolpec vedno 0. Razlika je strošek topologije.
+ *  Every CSV row separates THREE times, because that is exactly what sets it apart
+ *  from the direct branch:
+ *    t_*_ms            what the client measures (the whole round trip)
+ *    merchant_*_ms     `X-Server-Ms` — how long the merchant spent
+ *    facilitator_*_ms  `X-Downstream-Ms` — how much of that was waiting on the facilitator
+ *  In the direct branch the last column is always 0. The difference is the cost of the topology.
  *
- *  Koda in komentarji angleško-slovensko mešano kot drugod v paketu; konzola in
- *  glave CSV so slovenske, enako kot v ostalih merilnih okoljih.
+ *  Code, comments, console output and CSV headers follow the same conventions as the
+ *  other measurement environments in this package.
  * ============================================================================
  */
 
@@ -49,37 +50,37 @@ const has = (f) => args.includes(f);
 const val = (f, d) => { const i = args.indexOf(f); return i >= 0 && args[i + 1] ? args[i + 1] : d; };
 
 const MERCHANT_URL = val('--merchant-url', process.env.MERCHANT_URL || cfg.MERCHANT_URL || 'http://127.0.0.1:8081');
-const POSREDNIK_URL = val('--posrednik-url', process.env.POSREDNIK_URL || cfg.POSREDNIK_URL || 'http://127.0.0.1:4000');
+const FACILITATOR_URL = val('--facilitator-url', process.env.FACILITATOR_URL || cfg.FACILITATOR_URL || 'http://127.0.0.1:4000');
 const NETWORK = process.env.NETWORK || cfg.NETWORK || 'sepolia';
 const RPC_URL = val('--rpc-url', process.env.RPC_URL || cfg.RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com');
-// Globino potrditev privzeto prevzamemo od POSREDNIKA (on je tisti, ki bere verigo).
-// Če bi agent čakal manj potrditev, kot jih posrednik zahteva, bi vsako preverjanje
-// odpovedalo — in to šele po tem, ko je prava transakcija že plačana.
+// By default we take the confirmation depth from the FACILITATOR (it is the one reading the chain).
+// If the agent waited for fewer confirmations than the facilitator requires, every verification
+// would fail — and only after the real transaction had already been paid for.
 let CONFIRMATIONS = parseInt(val('--confirmations', process.env.CONFIRMATIONS || cfg.CONFIRMATIONS || '0'), 10) || 0;
 async function uskladiPotrditve(pcfg) {
   if (CONFIRMATIONS > 0) return CONFIRMATIONS;
   CONFIRMATIONS = (pcfg && parseInt(pcfg.minConfirmations, 10)) || 1;
   return CONFIRMATIONS;
 }
-// Trgovec je zaprt s skrbniško prijavo; agent se predstavi s strojnim žetonom.
-//   grep ZETON ../streznik/data/admin-credentials.txt
-// Posrednikova pot /submit-payment je javna, zato tam žetona ne rabimo.
+// The merchant is closed behind an admin login; the agent identifies itself with a machine token.
+//   grep TOKEN ../server/data/admin-credentials.txt
+// The facilitator's /submit-payment route is public, so no token is needed there.
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || cfg.ADMIN_TOKEN || '';
 
 const MODE = has('--real') ? 'real' : 'mock';
-const TOK = has('--merjeno') ? 'merjeno' : 'tx';
+const TOK = has('--metered') ? 'metered' : 'tx';
 const QUERIES = parseInt(val('--queries', '20'), 10);
 const DEBITS = parseInt(val('--debits', '20'), 10);
 const PAUSE_MS = parseInt(val('--pause-ms', '0'), 10);
 const TOPUP_WEI = val('--topup-wei', '2500000000000');
 const SECURITY = has('--security');
-const X402 = has('--x402');   // vzporedni način: x402 exact prek lokalnega posrednika
-const OUT = val('--out', path.join(__dirname, '..', 'meritve',
-  X402 ? `x402_posrednik_tx_${MODE}.csv` : `posrednik_${TOK}_${MODE}.csv`));
+const X402 = has('--x402');   // parallel mode: x402 exact via the local facilitator
+const OUT = val('--out', path.join(__dirname, '..', 'measurements',
+  X402 ? `x402_facilitator_tx_${MODE}.csv` : `facilitator_${TOK}_${MODE}.csv`));
 
-const trgovec = axios.create({ baseURL: MERCHANT_URL, timeout: 120_000, validateStatus: () => true,
+const merchant = axios.create({ baseURL: MERCHANT_URL, timeout: 120_000, validateStatus: () => true,
   headers: { 'X-Demo-Agent': 'agent', ...(ADMIN_TOKEN ? { Authorization: `Bearer ${ADMIN_TOKEN}` } : {}) } });
-const posrednik = axios.create({ baseURL: POSREDNIK_URL, timeout: 120_000, validateStatus: () => true,
+const facilitator = axios.create({ baseURL: FACILITATOR_URL, timeout: 120_000, validateStatus: () => true,
   headers: { 'X-Demo-Agent': 'agent' } });
 
 const nowIso = () => new Date().toISOString();
@@ -96,70 +97,70 @@ let wallet, provider = null;
 function makeWallet() {
   if (MODE === 'real') {
     const wf = path.join(__dirname, 'wallet.json');
-    if (!fs.existsSync(wf)) { console.error('❌ wallet.json manjka (glej wallet.example.json).'); process.exit(1); }
+    if (!fs.existsSync(wf)) { console.error('❌ wallet.json is missing (see wallet.example.json).'); process.exit(1); }
     provider = new ethers.JsonRpcProvider(RPC_URL);
     return new ethers.Wallet(JSON.parse(fs.readFileSync(wf, 'utf8')).privateKey, provider);
   }
-  // mock: podpisovanje potrebuje ključ, ne pa sredstev — enkratna denarnica zadošča.
+  // mock: signing needs a key but no funds — a one-off wallet is enough.
   return ethers.Wallet.createRandom();
 }
 
 const CSV_TX = [
-  'dogodek', 'cas_iso', 'nacin', 'topologija',
-  't_izziv_ms', 't_veriga_ms', 't_prijava_ms', 't_dostop_ms', 't_skupaj_ms',
-  'trgovec_izziv_ms', 'trgovec_dostop_ms',
-  'posrednik_izziv_ms', 'posrednik_dostop_ms', 'posrednik_prijava_ms', 'posrednik_veriga_ms',
-  'cena_wei', 'gas_enote', 'provizija_eth', 'kum_provizija_eth',
-  'temperatura_c', 'vlaga_pct', 'tx_hash', 'request_id'
+  'event', 'timestamp_iso', 'mode', 'topology',
+  't_challenge_ms', 't_chain_ms', 't_report_ms', 't_access_ms', 't_total_ms',
+  'merchant_challenge_ms', 'merchant_access_ms',
+  'facilitator_challenge_ms', 'facilitator_access_ms', 'facilitator_report_ms', 'facilitator_chain_ms',
+  'price_wei', 'gas_units', 'fee_eth', 'cum_fee_eth',
+  'temperature_c', 'humidity_pct', 'tx_hash', 'request_id'
 ].join(',');
-const CSV_MERJENO = [
-  'dogodek', 'cas_iso', 'nacin', 'topologija', 'vrsta',
-  't_podpis_ms', 't_zahteva_ms', 'streznik_ms', 'posrednik_ms', 't_skupaj_ms',
-  'cena_wei', 'dobroimetje_wei', 'proracun_ostanek_wei',
-  'gas_enote', 'provizija_eth', 'temperatura_c', 'vlaga_pct', 'nonce', 'seja'
+const CSV_METERED = [
+  'event', 'timestamp_iso', 'mode', 'topology', 'kind',
+  't_sign_ms', 't_request_ms', 'server_ms', 'facilitator_ms', 't_total_ms',
+  'price_wei', 'credit_wei', 'budget_remaining_wei',
+  'gas_units', 'fee_eth', 'temperature_c', 'humidity_pct', 'nonce', 'session'
 ].join(',');
 function ensureCsv(f, header) { fs.mkdirSync(path.dirname(f), { recursive: true }); if (!fs.existsSync(f)) fs.writeFileSync(f, header + '\n'); }
 
-// Trgovec je zaprt s skrbniško prijavo — brez veljavnega žetona ne gre nikamor.
+// The merchant is closed behind an admin login — without a valid token nothing gets through.
 function napakaPrijave() {
   console.error(`
-❌ Trgovec je zavrnil prijavo (401). Merilni agent potrebuje strojni žeton.
+❌ The merchant rejected the login (401). The measurement agent needs a machine token.
 
-   Na strežniku (po SSH) poišči žeton:
-     grep ZETON ../streznik/data/admin-credentials.txt
+   On the server (over SSH) find the token:
+     grep TOKEN ../server/data/admin-credentials.txt
 
-   Nato ga podaj agentu:
-     ADMIN_TOKEN=$(grep '^ZETON=' ../streznik/data/admin-credentials.txt | cut -d= -f2) node agent.js ${args.join(' ')}
+   Then pass it to the agent:
+     ADMIN_TOKEN=$(grep '^TOKEN=' ../server/data/admin-credentials.txt | cut -d= -f2) node agent.js ${args.join(' ')}
 `);
   process.exitCode = 1;
 }
 function napakaPosrednika(r) {
   console.error(`
-❌ Posrednik (${POSREDNIK_URL}) ni dosegljiv${r && r.status ? ` (status ${r.status})` : ''}.
+❌ The facilitator (${FACILITATOR_URL}) is unreachable${r && r.status ? ` (status ${r.status})` : ''}.
 
-   V tej topologiji trgovec brez posrednika ne more sprejeti nobenega plačila —
-   to ni napaka merjenja, ampak lastnost arhitekture (b) — v literaturi znana
-   kot „odvisnost od razpoložljivosti".
+   In this topology the merchant cannot accept any payment without the facilitator —
+   this is not a measurement error but a property of architecture (b) — known in the
+   literature as "availability dependence".
 
-   Poženi posrednika:  cd ../posrednik && npm run mock
+   Start the facilitator:  cd ../facilitator && npm run mock
 `);
   process.exitCode = 1;
 }
 
-// ══════════ Plačilo za vsak odčitek prek posrednika ══════════════════════════
+// ══════════ Payment per reading via the facilitator ══════════════════════════
 async function runTx() {
-  banner(`POSREDNIK, PLAČILO NA ODČITEK · način=${MODE.toUpperCase()} · N=${QUERIES}`);
-  console.log(`  trgovec=${MERCHANT_URL} · posrednik=${POSREDNIK_URL} · plačnik=${wallet.address}`);
+  banner(`FACILITATOR, PAYMENT PER READING · mode=${MODE.toUpperCase()} · N=${QUERIES}`);
+  console.log(`  merchant=${MERCHANT_URL} · facilitator=${FACILITATOR_URL} · payer=${wallet.address}`);
 
-  const h = await posrednik.get('/health');
+  const h = await facilitator.get('/health');
   if (h.status !== 200) return napakaPosrednika(h);
   await uskladiPotrditve(h.data);
-  const c = await trgovec.get('/config');
+  const c = await merchant.get('/config');
   if (c.status === 401) return napakaPrijave();
   if (c.status !== 200) { console.error(`  ✗ /config ${c.status}`); process.exitCode = 1; return; }
   if (!!c.data.mockVerify !== !!h.data.mockVerify) {
-    console.error(`\n❌ Neskladje načina: trgovec mockVerify=${c.data.mockVerify}, posrednik mockVerify=${h.data.mockVerify}.`);
-    console.error('   Meritev bi bila neveljavna. Uskladi MOCK_VERIFY v obeh .env.\n');
+    console.error(`\n❌ Mode mismatch: merchant mockVerify=${c.data.mockVerify}, facilitator mockVerify=${h.data.mockVerify}.`);
+    console.error('   The measurement would be invalid. Align MOCK_VERIFY in both .env files.\n');
     process.exitCode = 1; return;
   }
   ensureCsv(OUT, CSV_TX);
@@ -169,16 +170,16 @@ async function runTx() {
   for (let i = 1; i <= QUERIES; i++) {
     const T0 = performance.now();
     try {
-      // 1) 402 izziv (trgovec ga odpre pri posredniku: M→F, F→M)
+      // 1) 402 challenge (the merchant opens it at the facilitator: M→F, F→M)
       let s = performance.now();
-      const ch = await trgovec.get('/tx/reading', { headers: { 'X-Payer': wallet.address } });
+      const ch = await merchant.get('/tx/reading', { headers: { 'X-Payer': wallet.address } });
       const tIzziv = performance.now() - s;
       if (ch.status === 401) return napakaPrijave();
       if (ch.status === 502) return napakaPosrednika(ch);
-      if (ch.status !== 402) throw new Error(`pričakoval 402, dobil ${ch.status}`);
+      if (ch.status !== 402) throw new Error(`expected 402, got ${ch.status}`);
       const pay = ch.data.payment;
 
-      // 2) plačilo na verigi (C→B)
+      // 2) payment on the chain (C→B)
       let txHash, gasUsed = '', feeEth = '', tVeriga = 0;
       s = performance.now();
       if (MODE === 'real') {
@@ -190,16 +191,16 @@ async function runTx() {
       } else { txHash = randTxHash(); }
       tVeriga = performance.now() - s;
 
-      // 3) prijava plačila POSREDNIKU (C→F) — edini klic, ki gre mimo trgovca
+      // 3) report the payment to the FACILITATOR (C→F) — the only call that bypasses the merchant
       s = performance.now();
-      const sp = await posrednik.post('/submit-payment', { requestId: pay.requestId, txHash, network: NETWORK, payerAddress: wallet.address });
+      const sp = await facilitator.post('/submit-payment', { requestId: pay.requestId, txHash, network: NETWORK, payerAddress: wallet.address });
       const tPrijava = performance.now() - s;
       if (sp.status !== 200) throw new Error(`submit-payment ${sp.status}: ${JSON.stringify(sp.data)}`);
       const proofToken = sp.data.proofToken || (sp.data.proof && sp.data.proof.token);
 
-      // 4) dostop pri trgovcu (C→M; trgovec žeton unovči pri posredniku, M→F)
+      // 4) access at the merchant (C→M; the merchant redeems the token at the facilitator, M→F)
       s = performance.now();
-      const rd = await trgovec.get('/tx/reading', { headers: { 'X-Payment': proofToken } });
+      const rd = await merchant.get('/tx/reading', { headers: { 'X-Payment': proofToken } });
       const tDostop = performance.now() - s;
       if (rd.status !== 200) throw new Error(`reading ${rd.status}: ${JSON.stringify(rd.data)}`);
 
@@ -208,7 +209,7 @@ async function runTx() {
       const posrPrijava = hdrNum(sp, 'X-Server-Ms'), posrVeriga = hdrNum(sp, 'X-Chain-Read-Ms');
       const reading = rd.data.reading;
       fs.appendFileSync(OUT, [
-        `poizvedba_${i}`, nowIso(), MODE, 'posredniska',
+        `query_${i}`, nowIso(), MODE, 'facilitator',
         num(tIzziv), num(tVeriga), num(tPrijava), num(tDostop), num(skupaj),
         num(hdrNum(ch, 'X-Server-Ms')), num(hdrNum(rd, 'X-Server-Ms')),
         num(posrIzziv), num(posrDostop), num(posrPrijava), num(posrVeriga),
@@ -216,63 +217,63 @@ async function runTx() {
         reading.temperature_c, reading.humidity_pct, txHash, pay.requestId
       ].join(',') + '\n');
       ok++; tSkupaj.push(skupaj); tPosr.push(posrIzziv + posrDostop + posrPrijava);
-      console.log(`  ✓ ${String(i).padStart(3)} · skupaj=${num(skupaj)} ms · izziv=${num(tIzziv)} · veriga=${num(tVeriga)} · prijava=${num(tPrijava)} · dostop=${num(tDostop)} ms  [posrednik ${num(posrIzziv + posrDostop + posrPrijava)} ms]`);
+      console.log(`  ✓ ${String(i).padStart(3)} · total=${num(skupaj)} ms · challenge=${num(tIzziv)} · chain=${num(tVeriga)} · report=${num(tPrijava)} · access=${num(tDostop)} ms  [facilitator ${num(posrIzziv + posrDostop + posrPrijava)} ms]`);
     } catch (e) { console.error(`  ✗ ${i}: ${e.message}`); }
     if (PAUSE_MS) await sleep(PAUSE_MS);
   }
-  povzetek('placilo na odcitek', { ok, n: QUERIES, tSkupaj, tPosr, onChain: ok, cumFee });
+  povzetek('payment per reading', { ok, n: QUERIES, tSkupaj, tPosr, onChain: ok, cumFee });
 }
 
-// ══════════ Merjena seja prek posrednika ═════════════════════════════════════
-async function runMerjeno() {
-  banner(`POSREDNIK × MERJENA SEJA · način=${MODE.toUpperCase()} · N bremenitev=${DEBITS}`);
-  console.log(`  trgovec=${MERCHANT_URL} · posrednik=${POSREDNIK_URL} · plačnik=${wallet.address}`);
+// ══════════ Metered session via the facilitator ══════════════════════════════
+async function runMetered() {
+  banner(`FACILITATOR × METERED SESSION · mode=${MODE.toUpperCase()} · N debits=${DEBITS}`);
+  console.log(`  merchant=${MERCHANT_URL} · facilitator=${FACILITATOR_URL} · payer=${wallet.address}`);
 
-  const h = await posrednik.get('/health');
+  const h = await facilitator.get('/health');
   if (h.status !== 200) return napakaPosrednika(h);
   await uskladiPotrditve(h.data);
-  const c = await trgovec.get('/config');
+  const c = await merchant.get('/config');
   if (c.status === 401) return napakaPrijave();
   if (c.status !== 200) { console.error(`  ✗ /config ${c.status}`); process.exitCode = 1; return; }
-  ensureCsv(OUT, CSV_MERJENO);
-  const m = c.data.merjeno;
+  ensureCsv(OUT, CSV_METERED);
+  const m = c.data.metered;
   const price = BigInt(m.priceWeiPerCall);
   const maxWei = (price + BigInt(m.priceWeiPerByte) * 4096n).toString();
-  console.log(`  Cena/odčitek: ${m.priceWeiPerCall} wei (+${m.priceWeiPerByte}/zlog)`);
+  console.log(`  Price/reading: ${m.priceWeiPerCall} wei (+${m.priceWeiPerByte}/byte)`);
 
-  // FAZA A — ena polnitev na verigi odpre sejo (trgovec jo odpre pri posredniku)
-  banner('FAZA A · Polnitev (1 on-chain transakcija) → seja pri posredniku');
+  // PHASE A — one on-chain top-up opens the session (the merchant opens it at the facilitator)
+  banner('PHASE A · Top-up (1 on-chain transaction) → session at facilitator');
   let txHash, gasUsed = '', feeEth = '';
   const body = { payerAddress: wallet.address };
   if (MODE === 'real') {
     const tx = await wallet.sendTransaction({ to: c.data.receiver, value: BigInt(TOPUP_WEI) });
-    console.log(`  ✓ polnitev oddana · tx=${tx.hash}`);
+    console.log(`  ✓ top-up submitted · tx=${tx.hash}`);
     const rc = await tx.wait(CONFIRMATIONS);
     gasUsed = rc.gasUsed.toString();
     const gp = rc.gasPrice ?? tx.gasPrice ?? null;
     if (gp) feeEth = ethers.formatEther(rc.gasUsed * gp);
     txHash = tx.hash;
-    console.log(`  ✓ potrjeno · blok=${rc.blockNumber} · gas=${gasUsed} · provizija=${feeEth} ETH`);
+    console.log(`  ✓ confirmed · block=${rc.blockNumber} · gas=${gasUsed} · fee=${feeEth} ETH`);
   } else {
     txHash = randTxHash();
     body.mockDepositWei = (price * BigInt(DEBITS + 5)).toString();
   }
   let s = performance.now();
-  const op = await trgovec.post('/merjeno/session/open', { txHash, ...body });
+  const op = await merchant.post('/metered/session/open', { txHash, ...body });
   const tOpen = performance.now() - s;
   if (op.status === 502) return napakaPosrednika(op);
   if (op.status !== 200) { console.error(`  ✗ session/open ${op.status}: ${JSON.stringify(op.data)}`); process.exitCode = 1; return; }
   const session = op.data.session;
-  console.log(`  ✓ seja=${session.sessionId} · dobroimetje=${session.depositWei} wei · velja do=${session.expiresAt}`);
+  console.log(`  ✓ session=${session.sessionId} · credit=${session.depositWei} wei · valid until=${session.expiresAt}`);
   fs.appendFileSync(OUT, [
-    'polnitev', nowIso(), MODE, 'posredniska', 'topup', '', num(tOpen),
+    'topup', nowIso(), MODE, 'facilitator', 'topup', '', num(tOpen),
     num(hdrNum(op, 'X-Server-Ms')), num(hdrNum(op, 'X-Downstream-Ms')), num(tOpen),
     session.depositWei, session.balanceWei, session.budgetRemainingWei,
     gasUsed, feeEth, '', '', '', session.sessionId
   ].join(',') + '\n');
 
-  // FAZA B — N podpisanih bremenitev; vsaka gre pri trgovcu skozi posrednika
-  banner(`FAZA B · ${DEBITS} podpisanih bremenitev (brez novih transakcij)`);
+  // PHASE B — N signed debits; at the merchant each one goes through the facilitator
+  banner(`PHASE B · ${DEBITS} signed debits (no new transactions)`);
   const tPod = [], tZah = [], tPos = []; let ok = 0;
   for (let i = 1; i <= DEBITS; i++) {
     const T0 = performance.now();
@@ -282,25 +283,25 @@ async function runMerjeno() {
       const sig = await wallet.signMessage(debitMessage(wallet.address, session.sessionId, nonce, m.resource, maxWei));
       const tPodpis = performance.now() - t;
       t = performance.now();
-      const r = await trgovec.get('/merjeno/reading-metered', { headers: { 'X-Payer': wallet.address, 'X-Session': session.sessionId, 'X-Nonce': nonce, 'X-Signature': sig, 'X-Max-Wei': maxWei } });
+      const r = await merchant.get('/metered/reading-metered', { headers: { 'X-Payer': wallet.address, 'X-Session': session.sessionId, 'X-Nonce': nonce, 'X-Signature': sig, 'X-Max-Wei': maxWei } });
       const tZahteva = performance.now() - t;
       if (r.status === 502) return napakaPosrednika(r);
       if (r.status !== 200) throw new Error(`${r.status}: ${JSON.stringify(r.data)}`);
       const reading = r.data.reading;
       const pos = hdrNum(r, 'X-Downstream-Ms');
       fs.appendFileSync(OUT, [
-        `bremenitev_${i}`, nowIso(), MODE, 'posredniska', 'debit',
+        `debit_${i}`, nowIso(), MODE, 'facilitator', 'debit',
         num(tPodpis), num(tZahteva), num(hdrNum(r, 'X-Server-Ms')), num(pos), num(performance.now() - T0),
         hdr(r, 'X-Charged-Wei'), hdr(r, 'X-Balance-Wei'), hdr(r, 'X-Budget-Remaining-Wei'),
         '', '', reading.temperature_c, reading.humidity_pct, nonce, session.sessionId
       ].join(',') + '\n');
       ok++; tPod.push(tPodpis); tZah.push(tZahteva); tPos.push(pos);
-      console.log(`  ✓ bremenitev ${String(i).padStart(2)} · T=${reading.temperature_c}°C RH=${reading.humidity_pct}% · t_podpis=${num(tPodpis)} ms · t_zahteva=${num(tZahteva)} ms  [posrednik ${num(pos)} ms] · dobroimetje=${hdr(r, 'X-Balance-Wei')} wei`);
-    } catch (e) { console.error(`  ✗ bremenitev ${i}: ${e.message}`); }
+      console.log(`  ✓ debit ${String(i).padStart(2)} · T=${reading.temperature_c}°C RH=${reading.humidity_pct}% · t_sign=${num(tPodpis)} ms · t_request=${num(tZahteva)} ms  [facilitator ${num(pos)} ms] · credit=${hdr(r, 'X-Balance-Wei')} wei`);
+    } catch (e) { console.error(`  ✗ debit ${i}: ${e.message}`); }
     if (PAUSE_MS) await sleep(PAUSE_MS);
   }
-  const fin = (await trgovec.get(`/merjeno/session/${session.sessionId}`)).data.session;
-  povzetek('merjena seja', { ok, n: DEBITS, tSkupaj: tZah, tPosr: tPos, onChain: 1, cumFee: parseFloat(feeEth || '0'), extra: { tPod, fin } });
+  const fin = (await merchant.get(`/metered/session/${session.sessionId}`)).data.session;
+  povzetek('metered session', { ok, n: DEBITS, tSkupaj: tZah, tPosr: tPos, onChain: 1, cumFee: parseFloat(feeEth || '0'), extra: { tPod, fin } });
 }
 
 function st(a) {
@@ -311,160 +312,160 @@ function st(a) {
 }
 function povzetek(exp, { ok, n, tSkupaj, tPosr, onChain, cumFee, extra }) {
   const s1 = st(tSkupaj), s2 = st(tPosr);
-  banner(`POVZETEK ${exp} · uspešnih ${ok}/${n} · on-chain transakcij: ${onChain} · CSV: ${path.relative(process.cwd(), OUT)}`);
-  if (extra && extra.tPod) { const sp = st(extra.tPod); if (sp) console.log(`  t_podpis   (ms): median=${num(sp.median)} mean=${num(sp.mean)} p95=${num(sp.p95)}`); }
-  if (s1) console.log(`  obhod      (ms): median=${num(s1.median)} mean=${num(s1.mean)} p95=${num(s1.p95)} max=${num(s1.max)}`);
-  if (s2) console.log(`  posrednik  (ms): median=${num(s2.median)} mean=${num(s2.mean)} p95=${num(s2.p95)} max=${num(s2.max)}   ← v neposredni veji (mapa 05) je to 0`);
-  if (cumFee) console.log(`  kumulativna provizija: ${cumFee.toFixed(8)} ETH`);
-  if (extra && extra.fin) console.log(`  Končno stanje seje: dobroimetje=${extra.fin.balanceWei} wei · porabljeno=${extra.fin.spentWei} wei`);
-  const jsonOut = OUT.replace(/\.csv$/, '_povzetek.json');
-  fs.writeFileSync(jsonOut, JSON.stringify({ poskus: exp, nacin: MODE, topologija: 'posredniska', n, uspesnih: ok,
-    onChainTransakcij: onChain, obhod_ms: s1, posrednik_ms: s2,
-    ...(extra && extra.tPod ? { t_podpis_ms: st(extra.tPod) } : {}), ...(extra && extra.fin ? { seja: extra.fin } : {}) }, null, 2));
-  console.log(`  Povzetek JSON: ${path.relative(process.cwd(), jsonOut)}`);
+  banner(`SUMMARY ${exp} · succeeded ${ok}/${n} · on-chain transactions: ${onChain} · CSV: ${path.relative(process.cwd(), OUT)}`);
+  if (extra && extra.tPod) { const sp = st(extra.tPod); if (sp) console.log(`  t_sign      (ms): median=${num(sp.median)} mean=${num(sp.mean)} p95=${num(sp.p95)}`); }
+  if (s1) console.log(`  round trip  (ms): median=${num(s1.median)} mean=${num(s1.mean)} p95=${num(s1.p95)} max=${num(s1.max)}`);
+  if (s2) console.log(`  facilitator (ms): median=${num(s2.median)} mean=${num(s2.mean)} p95=${num(s2.p95)} max=${num(s2.max)}   ← in the direct branch (folder 05) this is 0`);
+  if (cumFee) console.log(`  cumulative fee: ${cumFee.toFixed(8)} ETH`);
+  if (extra && extra.fin) console.log(`  Final session state: credit=${extra.fin.balanceWei} wei · spent=${extra.fin.spentWei} wei`);
+  const jsonOut = OUT.replace(/\.csv$/, '_summary.json');
+  fs.writeFileSync(jsonOut, JSON.stringify({ poskus: exp, mode: MODE, topology: 'facilitator', n, succeeded: ok,
+    onChainTransactions: onChain, obhod_ms: s1, facilitator_ms: s2,
+    ...(extra && extra.tPod ? { t_sign_ms: st(extra.tPod) } : {}), ...(extra && extra.fin ? { session: extra.fin } : {}) }, null, 2));
+  console.log(`  JSON summary: ${path.relative(process.cwd(), jsonOut)}`);
 }
 
-// ══════════ VARNOSTNI TESTI — pet popravljenih napak stare izvedbe ═══════════
+// ══════════ SECURITY TESTS — five fixed bugs of the old implementation ═══════
 async function runSecurity() {
-  banner('VARNOSTNI IN ODPOVEDNI TESTI (posredniška veja)');
-  if (MODE === 'real') { console.error('  Varnostni testi so za --mock. Zaženi: node agent.js --security'); process.exit(1); }
+  banner('SECURITY AND FAILURE TESTS (facilitator branch)');
+  if (MODE === 'real') { console.error('  The security tests are meant for --mock. Run: node agent.js --security'); process.exit(1); }
   const results = [];
-  const rec = (ime, prc, dej, ok, op = '') => { results.push({ ime, prc, dej, ok }); console.log(`  ${ok ? '✓' : '✗'} ${ime.padEnd(50)} pričakovano=${String(prc).padEnd(9)} dejansko=${String(dej).padEnd(9)} ${op}`); };
+  const rec = (ime, prc, dej, ok, op = '') => { results.push({ ime, prc, dej, ok }); console.log(`  ${ok ? '✓' : '✗'} ${ime.padEnd(50)} expected=${String(prc).padEnd(9)} actual=${String(dej).padEnd(9)} ${op}`); };
 
-  const h = await posrednik.get('/health');
+  const h = await facilitator.get('/health');
   if (h.status !== 200) return napakaPosrednika(h);
-  const c = await trgovec.get('/config');
+  const c = await merchant.get('/config');
   if (c.status === 401) return napakaPrijave();
   const price = BigInt(c.data.tx.priceWei);
-  const m = c.data.merjeno;
+  const m = c.data.metered;
   const maxWei = (BigInt(m.priceWeiPerCall) + BigInt(m.priceWeiPerByte) * 4096n).toString();
 
-  // pomožno: cel potek do dokaznega žetona
-  const doIzziv = async () => (await trgovec.get('/tx/reading', { headers: { 'X-Payer': wallet.address } })).data.payment;
-  const doSubmit = (requestId, txHash, over) => posrednik.post('/submit-payment', { requestId, txHash, network: NETWORK, payerAddress: wallet.address, ...over });
+  // helper: the whole flow up to the proof token
+  const doIzziv = async () => (await merchant.get('/tx/reading', { headers: { 'X-Payer': wallet.address } })).data.payment;
+  const doSubmit = (requestId, txHash, over) => facilitator.post('/submit-payment', { requestId, txHash, network: NETWORK, payerAddress: wallet.address, ...over });
 
-  // ── T1: trgovec res nima verige ───────────────────────────────────────────
-  const th = await trgovec.get('/health');
-  rec('Trgovec poroča „brez dostopa do verige"', 'da', th.data.veriga === 'ni dostopa (samo posrednik)' ? 'da' : 'ne', th.data.veriga === 'ni dostopa (samo posrednik)');
+  // ── T1: the merchant really has no chain ──────────────────────────────────
+  const th = await merchant.get('/health');
+  rec('Merchant reports "no chain access"', 'yes', th.data.chain === 'no access (facilitator only)' ? 'yes' : 'no', th.data.chain === 'no access (facilitator only)');
 
-  // ── T2: odpadli poti ──────────────────────────────────────────────────────
-  const tv = await trgovec.post('/tx/verify', { requestId: '00000000-0000-4000-8000-000000000000', txHash: randTxHash(), network: NETWORK, payerAddress: wallet.address });
-  rec('Pri trgovcu ni več /tx/verify (plačilo se prijavi posredniku)', 404, tv.status, tv.status === 404);
+  // ── T2: dropped routes ────────────────────────────────────────────────────
+  const tv = await merchant.post('/tx/verify', { requestId: '00000000-0000-4000-8000-000000000000', txHash: randTxHash(), network: NETWORK, payerAddress: wallet.address });
+  rec('Merchant no longer has /tx/verify (payment is reported to the facilitator)', 404, tv.status, tv.status === 404);
 
-  // ── T3: NAPAKA 1 — dokazni žeton je enkraten ──────────────────────────────
+  // ── T3: BUG 1 — the proof token is single-use ─────────────────────────────
   let pay = await doIzziv();
   let sp = await doSubmit(pay.requestId, randTxHash());
-  rec('Prijava plačila → dokazni žeton', 200, sp.status, sp.status === 200);
+  rec('Payment report → proof token', 200, sp.status, sp.status === 200);
   const tok = sp.data.proofToken;
-  let a1 = await trgovec.get('/tx/reading', { headers: { 'X-Payment': tok } });
-  rec('Prva uporaba dokazila', 200, a1.status, a1.status === 200);
-  let a2 = await trgovec.get('/tx/reading', { headers: { 'X-Payment': tok } });
-  rec('NAPAKA 1 · druga uporaba istega dokazila', 403, a2.status, a2.status === 403, a2.data?.error || '');
+  let a1 = await merchant.get('/tx/reading', { headers: { 'X-Payment': tok } });
+  rec('First use of the proof', 200, a1.status, a1.status === 200);
+  let a2 = await merchant.get('/tx/reading', { headers: { 'X-Payment': tok } });
+  rec('BUG 1 · second use of the same proof', 403, a2.status, a2.status === 403, a2.data?.error || '');
 
-  // ── T4: NAPAKA 2 — ista transakcija ne unovči dveh zahtev ─────────────────
+  // ── T4: BUG 2 — one transaction cannot redeem two requests ────────────────
   const skupniTx = randTxHash();
   const p1 = await doIzziv(); const r1 = await doSubmit(p1.requestId, skupniTx);
   const p2 = await doIzziv(); const r2 = await doSubmit(p2.requestId, skupniTx);
-  rec('NAPAKA 2 · ista transakcija za drugo zahtevo', 400, r2.status, r1.status === 200 && r2.status === 400, r2.data?.error || '');
+  rec('BUG 2 · same transaction for a second request', 400, r2.status, r1.status === 200 && r2.status === 400, r2.data?.error || '');
 
-  // ── T5: NAPAKA 3 — premalo za 1 wei je premalo (celoštevilska primerjava) ──
+  // ── T5: BUG 3 — one wei short is short (integer comparison) ────────────────
   const p3 = await doIzziv();
   const r3 = await doSubmit(p3.requestId, randTxHash(), { mockValueWei: (price - 1n).toString() });
-  rec('NAPAKA 3 · plačilo za 1 wei prenizko', 400, r3.status, r3.status === 400, r3.data?.error || '');
+  rec('BUG 3 · payment 1 wei too low', 400, r3.status, r3.status === 400, r3.data?.error || '');
   const p4 = await doIzziv();
   const r4 = await doSubmit(p4.requestId, randTxHash(), { mockValueWei: price.toString() });
-  rec('NAPAKA 3 · plačilo točno v znesku', 200, r4.status, r4.status === 200);
+  rec('BUG 3 · payment exactly the amount', 200, r4.status, r4.status === 200);
 
-  // ── T6: posrednik zavrne neznano/poteklo zahtevo ──────────────────────────
+  // ── T6: the facilitator rejects an unknown/expired request ────────────────
   const r5 = await doSubmit('00000000-0000-4000-8000-000000000000', randTxHash());
-  rec('Neznana plačilna zahteva', 400, r5.status, r5.status === 400, r5.data?.error || '');
+  rec('Unknown payment request', 400, r5.status, r5.status === 400, r5.data?.error || '');
 
-  // ── T7: NAPAKA 5 — posrednik je avtenticiran ──────────────────────────────
-  const anon = axios.create({ baseURL: POSREDNIK_URL, validateStatus: () => true, timeout: 20_000 });
+  // ── T7: BUG 5 — the facilitator is authenticated ──────────────────────────
+  const anon = axios.create({ baseURL: FACILITATOR_URL, validateStatus: () => true, timeout: 20_000 });
   const r6 = await anon.post('/payment-request', { resource: '/x', recipient: wallet.address, amountWei: '1' });
-  rec('NAPAKA 5 · /payment-request brez žetona', 401, r6.status, r6.status === 401);
+  rec('BUG 5 · /payment-request without a token', 401, r6.status, r6.status === 401);
   const r7 = await anon.post('/verify-proof', { token: 'proof_x' });
-  rec('NAPAKA 5 · /verify-proof brez žetona', 401, r7.status, r7.status === 401);
+  rec('BUG 5 · /verify-proof without a token', 401, r7.status, r7.status === 401);
   const r8 = await anon.get('/health');
-  rec('/health ostaja javen (healthcheck vsebnika)', 200, r8.status, r8.status === 200);
+  rec('/health stays public (container healthcheck)', 200, r8.status, r8.status === 200);
 
-  // ── T8–T13: merjena seja skozi posrednika ─────────────────────────────────
+  // ── T8–T13: metered session through the facilitator ───────────────────────
   const openS = async (over = {}) => {
-    const r = await trgovec.post('/merjeno/session/open', { txHash: randTxHash(), payerAddress: wallet.address, mockDepositWei: (BigInt(m.priceWeiPerCall) * 10n).toString(), ...over });
+    const r = await merchant.post('/metered/session/open', { txHash: randTxHash(), payerAddress: wallet.address, mockDepositWei: (BigInt(m.priceWeiPerCall) * 10n).toString(), ...over });
     return r.data.session;
   };
   const doDebit = async (session, { nonce = mkNonce(), signAs = wallet, claimPayer = wallet.address, mw = maxWei } = {}) => {
     const sig = await signAs.signMessage(debitMessage(claimPayer, session.sessionId, nonce, m.resource, mw));
-    return trgovec.get('/merjeno/reading-metered', { headers: { 'X-Payer': claimPayer, 'X-Session': session.sessionId, 'X-Nonce': nonce, 'X-Signature': sig, 'X-Max-Wei': String(mw) } });
+    return merchant.get('/metered/reading-metered', { headers: { 'X-Payer': claimPayer, 'X-Session': session.sessionId, 'X-Nonce': nonce, 'X-Signature': sig, 'X-Max-Wei': String(mw) } });
   };
-  let r = await trgovec.get('/merjeno/reading-metered');
-  rec('Brez podpisa (manjkajoče glave)', 402, r.status, r.status === 402);
+  let r = await merchant.get('/metered/reading-metered');
+  rec('No signature (missing headers)', 402, r.status, r.status === 402);
   const sA = await openS();
   const nA = mkNonce();
   r = await doDebit(sA, { nonce: nA });
-  rec('Veljavna bremenitev prek posrednika', 200, r.status, r.status === 200);
+  rec('Valid debit via the facilitator', 200, r.status, r.status === 200);
   r = await doDebit(sA, { nonce: nA });
-  rec('Ponovitev nonce (replay)', 403, r.status, r.status === 403, r.data?.error || '');
+  rec('Nonce reuse (replay)', 403, r.status, r.status === 403, r.data?.error || '');
   const other = ethers.Wallet.createRandom();
   r = await doDebit(sA, { signAs: other });
-  rec('Ponarejen podpis (druga denarnica)', 403, r.status, r.status === 403, r.data?.error || '');
+  rec('Forged signature (different wallet)', 403, r.status, r.status === 403, r.data?.error || '');
   r = await doDebit(sA, { nonce: `${Date.now() - 10 * 60 * 1000}-deadbeef` });
-  rec('Zastarel nonce', 400, r.status, r.status === 400, r.data?.error || '');
+  rec('Stale nonce', 400, r.status, r.status === 400, r.data?.error || '');
   const sB = await openS({ mockDepositWei: (BigInt(m.priceWeiPerCall) * 10n).toString(), budgetWei: (BigInt(m.priceWeiPerCall) * 2n).toString() });
   await doDebit(sB); await doDebit(sB);
   r = await doDebit(sB);
-  rec('Presežen proračun (proračun=2×cena)', 402, r.status, r.status === 402, r.data?.reason || '');
+  rec('Budget exceeded (budget=2×price)', 402, r.status, r.status === 402, r.data?.reason || '');
   const sC = await openS({ mockDepositWei: (BigInt(m.priceWeiPerCall) * 2n).toString() });
   await doDebit(sC); await doDebit(sC);
   r = await doDebit(sC);
-  rec('Izčrpano dobroimetje', 402, r.status, r.status === 402, r.data?.reason || '');
+  rec('Credit exhausted', 402, r.status, r.status === 402, r.data?.reason || '');
   const sD = await openS();
   const sE = await openS();
   const sigCross = await wallet.signMessage(debitMessage(wallet.address, sD.sessionId, mkNonce(), m.resource, maxWei));
-  r = await trgovec.get('/merjeno/reading-metered', { headers: { 'X-Payer': wallet.address, 'X-Session': sE.sessionId, 'X-Nonce': mkNonce(), 'X-Signature': sigCross, 'X-Max-Wei': maxWei } });
-  rec('Podpis za drugo sejo', 403, r.status, r.status === 403, r.data?.error || '');
+  r = await merchant.get('/metered/reading-metered', { headers: { 'X-Payer': wallet.address, 'X-Session': sE.sessionId, 'X-Nonce': mkNonce(), 'X-Signature': sigCross, 'X-Max-Wei': maxWei } });
+  rec('Signature for a different session', 403, r.status, r.status === 403, r.data?.error || '');
 
   const ok = results.filter(x => x.ok).length;
-  banner(`REZULTAT: ${ok}/${results.length} testov uspešnih`);
-  const out = path.join(__dirname, '..', 'meritve', 'posrednik_varnost.csv');
+  banner(`RESULT: ${ok}/${results.length} tests passed`);
+  const out = path.join(__dirname, '..', 'measurements', 'facilitator_security.csv');
   fs.mkdirSync(path.dirname(out), { recursive: true });
-  fs.writeFileSync(out, 'test,pricakovano,dejansko,uspeh\n' + results.map(x => `"${x.ime}",${x.prc},${x.dej},${x.ok ? 1 : 0}`).join('\n') + '\n');
+  fs.writeFileSync(out, 'test,expected,actual,passed\n' + results.map(x => `"${x.ime}",${x.prc},${x.dej},${x.ok ? 1 : 0}`).join('\n') + '\n');
   console.log(`  CSV: ${path.relative(process.cwd(), out)}`);
   if (ok !== results.length) process.exitCode = 1;
 }
 
 // ── main ─────────────────────────────────────────────────────────────────────
-// ══════════ x402 v2 (VZPOREDNI NAČIN) — facilitirano prek posrednika ═════════
-// Odjemalec podpiše EIP-3009 pooblastilo in NE odda nobene transakcije;
-// trgovec delegira preverjanje/poravnavo POSREDNIKU, ki plača gas. Meri se
-// celotni obhod pri trgovcu + posrednikova stran prek vpogleda
-// /x402/payment/:id.
-const x402o = X402 ? require('./x402-odjemalec') : null;
+// ══════════ x402 v2 (PARALLEL MODE) — facilitated via the facilitator ════════
+// The client signs an EIP-3009 authorisation and submits NO transaction of its own;
+// the merchant delegates verification/settlement to the FACILITATOR, which pays the
+// gas. What is measured is the whole round trip at the merchant + the facilitator's
+// side, via the /x402/payment/:id lookup.
+const x402o = X402 ? require('./x402-client') : null;
 
 const X402_CSV_HEADER = [
-  'dogodek', 'cas_iso', 'nacin', 'protokol', 'topologija', 'omrezje', 'sredstvo', 'placnik_gasa',
-  't_402_ms', 't_podpis_ms', 't_placilo_http_ms', 't_skupaj_ms',
-  'trgovec_ms', 'trgovec_downstream_ms', 'preveri_ms', 'poravnaj_ms',
-  'znesek_atomic', 'decimals', 'kumulativno_atomic', 'payment_id', 'idempotenca',
-  'tx_hash', 'sinteticni_tx', 'blok', 'gas_enote', 'cena_gas_wei',
-  'temperatura_c', 'vlaga_pct', 'status'
+  'event', 'timestamp_iso', 'mode', 'protocol', 'topology', 'network', 'asset', 'gas_payer',
+  't_402_ms', 't_sign_ms', 't_payment_http_ms', 't_total_ms',
+  'merchant_ms', 'merchant_downstream_ms', 'verify_ms', 'settle_ms',
+  'amount_atomic', 'decimals', 'cumulative_atomic', 'payment_id', 'idempotency',
+  'tx_hash', 'synthetic_tx', 'block', 'gas_units', 'gas_price_wei',
+  'temperature_c', 'humidity_pct', 'status'
 ].join(',');
 
 function loadX402Payer() {
   const wf = path.join(__dirname, 'wallet.json');
   const wd = fs.existsSync(wf) ? JSON.parse(fs.readFileSync(wf, 'utf8')) : {};
   if (MODE === 'real' && !wd.x402PayerPrivateKey) {
-    console.error('❌ Za --x402 --real vpiši x402PayerPrivateKey v wallet.json (x402 veja je testna ETH konfiguracija; pravi tek zahteva EIP-3009 žeton, npr. USDC).');
+    console.error('❌ For --x402 --real put x402PayerPrivateKey into wallet.json (the x402 branch is a test ETH configuration; a real run needs an EIP-3009 token, e.g. USDC).');
     process.exit(1);
   }
   return x402o.makePayer({ privateKey: MODE === 'real' ? wd.x402PayerPrivateKey : undefined });
 }
 
 async function runX402Tx() {
-  const c = await trgovec.get('/x402/config');
+  const c = await merchant.get('/x402/config');
   if (c.status === 401) return napakaPrijave();
   if (c.status !== 200 || !c.data || c.data.mode === 'off') {
-    console.error('❌ Trgovec nima vklopljenega x402 načina (X402_MODE=facilitated na trgovcu, X402_MODE=self na posredniku).'); process.exit(1);
+    console.error('❌ The merchant does not have x402 mode enabled (X402_MODE=facilitated on the merchant, X402_MODE=self on the facilitator).'); process.exit(1);
   }
   const cfgX = c.data;
   const account = loadX402Payer();
@@ -472,12 +473,12 @@ async function runX402Tx() {
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
   if (!fs.existsSync(OUT)) fs.writeFileSync(OUT, X402_CSV_HEADER + '\n');
 
-  banner(`x402 PREK POSREDNIKA · 1 PORAVNAVA / POIZVEDBO · način=${MODE.toUpperCase()} · N=${QUERIES}`);
-  console.log(`  Trgovec=${MERCHANT_URL} · posrednik=${cfgX.posrednik} · prejemnik=${cfgX.payTo}`);
-  console.log(`  Cena/odčitek: ${cfgX.priceAtomic} atomskih enot ${cfgX.assetName} · gas plača: POSREDNIK`);
-  if (cfgX.mock) console.log('  ⚠ MOCK: poravnave so sintetične (0x6d6f636b6d6f636b…) — NE prave meritve.');
+  banner(`x402 VIA THE FACILITATOR · 1 SETTLEMENT / QUERY · mode=${MODE.toUpperCase()} · N=${QUERIES}`);
+  console.log(`  Merchant=${MERCHANT_URL} · facilitator=${cfgX.facilitator} · recipient=${cfgX.payTo}`);
+  console.log(`  Price/reading: ${cfgX.priceAtomic} atomic units of ${cfgX.assetName} · gas paid by: FACILITATOR`);
+  if (cfgX.mock) console.log('  ⚠ MOCK: settlements are synthetic (0x6d6f636b6d6f636b…) — NOT real measurements.');
 
-  let ok = 0; let kumulativnoAtomic = 0n;
+  let ok = 0; let cumulativeAtomic = 0n;
   const txHashes = new Set();
   for (let i = 1; i <= QUERIES; i++) {
     try {
@@ -487,101 +488,101 @@ async function runX402Tx() {
         headers: ADMIN_TOKEN ? { Authorization: `Bearer ${ADMIN_TOKEN}`, 'X-Demo-Agent': 'agent' } : { 'X-Demo-Agent': 'agent' }
       });
       const skupaj = performance.now() - T0;
-      if (r.status !== 200) throw new Error(`placilo ${r.status}`);
+      if (r.status !== 200) throw new Error(`payment ${r.status}`);
       const body = await r.res.json();
       const reading = body.reading || {};
-      kumulativnoAtomic += BigInt(cfgX.priceAtomic);
+      cumulativeAtomic += BigInt(cfgX.priceAtomic);
       if (r.paymentResponse && r.paymentResponse.txHash) txHashes.add(r.paymentResponse.txHash);
       const downMs = parseFloat(r.res.headers.get('X-Downstream-Ms') || '') || '';
-      let blok = '', gasEnote = '', cenaGasWei = '';
-      const pv = await trgovec.get(`/x402/payment/${r.paymentId}`);
-      if (pv.status === 200 && pv.data) { blok = pv.data.blok ?? ''; gasEnote = pv.data.gasEnote ?? ''; cenaGasWei = pv.data.cenaGasWei ?? ''; }
+      let block = '', gasUnits = '', gasPriceWei = '';
+      const pv = await merchant.get(`/x402/payment/${r.paymentId}`);
+      if (pv.status === 200 && pv.data) { block = pv.data.block ?? ''; gasUnits = pv.data.gasUnits ?? ''; gasPriceWei = pv.data.gasPriceWei ?? ''; }
       fs.appendFileSync(OUT, [
-        `poizvedba_${i}`, nowIso(), MODE, 'x402-facilitated', 'posredniska', cfgX.network, cfgX.assetName, 'posrednik',
+        `query_${i}`, nowIso(), MODE, 'x402-facilitated', 'facilitator', cfgX.network, cfgX.assetName, 'facilitator',
         num(r.t.t402), num(r.t.tPodpis), num(r.t.tPoravnavaHttp), num(skupaj),
         num(r.serverMs), num(downMs), num(r.verifyMs), num(r.settleMs),
-        cfgX.priceAtomic, cfgX.assetDecimals, kumulativnoAtomic.toString(), r.paymentId,
-        r.replayed ? 'predvajanje' : 'novo',
-        r.paymentResponse ? r.paymentResponse.txHash : '', r.sinteticni ? 1 : 0,
-        blok, gasEnote, cenaGasWei,
+        cfgX.priceAtomic, cfgX.assetDecimals, cumulativeAtomic.toString(), r.paymentId,
+        r.replayed ? 'replay' : 'new',
+        r.paymentResponse ? r.paymentResponse.txHash : '', r.synthetic ? 1 : 0,
+        block, gasUnits, gasPriceWei,
         reading.temperature_c ?? '', reading.humidity_pct ?? '', r.status
       ].join(',') + '\n');
-      console.log(`  ✓ ${String(i).padStart(3)} · skupaj=${num(skupaj)} ms · trgovec=${num(r.serverMs)} ms (od tega posrednik=${num(downMs)} ms) · tx=${r.paymentResponse ? String(r.paymentResponse.txHash).slice(0, 18) + '…' : '—'}${r.sinteticni ? ' (sintetični)' : ''}`);
+      console.log(`  ✓ ${String(i).padStart(3)} · total=${num(skupaj)} ms · merchant=${num(r.serverMs)} ms (of which facilitator=${num(downMs)} ms) · tx=${r.paymentResponse ? String(r.paymentResponse.txHash).slice(0, 18) + '…' : '—'}${r.synthetic ? ' (synthetic)' : ''}`);
       ok++;
     } catch (e) { console.error(`  ✗ ${i}: ${e.message}`); }
     if (PAUSE_MS) await sleep(PAUSE_MS);
   }
 
-  banner(`POVZETEK x402-posrednik · uspešnih ${ok}/${QUERIES} · poravnav: ${txHashes.size} · CSV: ${path.relative(process.cwd(), OUT)}`);
-  console.log(`  ${QUERIES} odčitkov = ${txHashes.size} x402 poravnav; poravnalno transakcijo odda in gas plača POSREDNIK.`);
-  console.log('  Trgovec med tem NIKOLI ne govori z verigo (enaka nespremenljivka kot pri lastnem protokolu).');
-  if (txHashes.size !== ok) { console.error('  ✗ NAPAKA: odčitki ≠ poravnave'); process.exitCode = 1; }
+  banner(`SUMMARY x402-facilitator · succeeded ${ok}/${QUERIES} · settlements: ${txHashes.size} · CSV: ${path.relative(process.cwd(), OUT)}`);
+  console.log(`  ${QUERIES} readings = ${txHashes.size} x402 settlements; the settlement transaction is submitted, and its gas paid, by the FACILITATOR.`);
+  console.log('  Meanwhile the merchant NEVER talks to the chain (the same invariant as with the custom protocol).');
+  if (txHashes.size !== ok) { console.error('  ✗ ERROR: readings ≠ settlements'); process.exitCode = 1; }
 }
 
 async function runX402Security() {
-  const c = await trgovec.get('/x402/config');
+  const c = await merchant.get('/x402/config');
   if (c.status === 401) return napakaPrijave();
   const posrednikMock = !!(c.data && ((c.data.posrednikX402 && c.data.posrednikX402.mock) || c.data.mock));
   if (c.status !== 200 || c.data.mode === 'off' || !posrednikMock) {
-    console.error('❌ Testi zahtevajo: trgovec X402_MODE=facilitated + posrednik X402_MODE=self X402_MOCK=true.'); process.exit(1);
+    console.error('❌ The tests require: merchant X402_MODE=facilitated + facilitator X402_MODE=self X402_MOCK=true.'); process.exit(1);
   }
   const cfgX = c.data;
   const account = loadX402Payer();
   const client = x402o.makeClient(account);
   const H = { ...(ADMIN_TOKEN ? { Authorization: `Bearer ${ADMIN_TOKEN}` } : {}), 'X-Demo-Agent': 'agent' };
   const url = `${MERCHANT_URL}/x402/tx/reading`;
-  banner('x402 VARNOSTNI TESTI (mapa 04 — facilitirana topologija)');
+  banner('x402 SECURITY TESTS (folder 04 — facilitated topology)');
   const results = [];
-  const rec = (ime, prc, dej, ok, op = '') => { results.push({ ime, prc, dej, ok, op }); console.log(`  ${ok ? '✓' : '✗'} ${ime.padEnd(50)} pričakovano=${String(prc).padEnd(12)} dejansko=${String(dej).padEnd(10)} ${op}`); };
+  const rec = (ime, prc, dej, ok, op = '') => { results.push({ ime, prc, dej, ok, op }); console.log(`  ${ok ? '✓' : '✗'} ${ime.padEnd(50)} expected=${String(prc).padEnd(12)} actual=${String(dej).padEnd(10)} ${op}`); };
 
-  { // topološka nespremenljivka: trgovec brez verige tudi v x402 načinu
-    const h = await trgovec.get('/health');
-    rec('T1 trgovec brez dostopa do verige', 'da', h.data && h.data.veriga === 'ni dostopa (samo posrednik)' ? 'da' : 'ne', h.data && h.data.veriga === 'ni dostopa (samo posrednik)');
+  { // topological invariant: the merchant has no chain in x402 mode either
+    const h = await merchant.get('/health');
+    rec('T1 merchant without chain access', 'yes', h.data && h.data.chain === 'no access (facilitator only)' ? 'yes' : 'no', h.data && h.data.chain === 'no access (facilitator only)');
   }
-  { // odkrivanje: /x402/supported javno na posredniku
-    const r = await posrednik.get('/x402/supported');
+  { // discovery: /x402/supported is public on the facilitator
+    const r = await facilitator.get('/x402/supported');
     const okKind = r.status === 200 && (r.data.kinds || []).some((k) => k.scheme === 'exact' && k.network === cfgX.network);
-    rec('T2 posrednik /x402/supported javno + exact', '200+exact', `${r.status}${okKind ? '+exact' : ''}`, okKind);
+    rec('T2 facilitator /x402/supported public + exact', '200+exact', `${r.status}${okKind ? '+exact' : ''}`, okKind);
   }
-  { // facilitatorski poti zahtevata žeton (trgovec-kot-stranka)
-    const r = await axios.post(`${POSREDNIK_URL}/x402/settle`, { a: 1 }, { validateStatus: () => true });
-    rec('T3 /x402/settle brez žetona → 401', 401, r.status, r.status === 401);
+  { // the facilitator routes require a token (merchant-as-client)
+    const r = await axios.post(`${FACILITATOR_URL}/x402/settle`, { a: 1 }, { validateStatus: () => true });
+    rec('T3 /x402/settle without a token → 401', 401, r.status, r.status === 401);
   }
-  { const r = await axios.get(url, { validateStatus: () => true }); rec('T4 brez prijave → 401 (avtentikacija ≠ plačilo)', 401, r.status, r.status === 401); }
-  { const r = await trgovec.get('/x402/tx/reading'); rec('T5 s prijavo, brez plačila → 402 + PAYMENT-REQUIRED', 402, r.status, r.status === 402 && !!r.headers['payment-required']); }
+  { const r = await axios.get(url, { validateStatus: () => true }); rec('T4 without login → 401 (authentication ≠ payment)', 401, r.status, r.status === 401); }
+  { const r = await merchant.get('/x402/tx/reading'); rec('T5 with login, without payment → 402 + PAYMENT-REQUIRED', 402, r.status, r.status === 402 && !!r.headers['payment-required']); }
   let prvi;
-  { prvi = await x402o.payFlow({ url, account, client, headers: H }); rec('T6 veljavno plačilo prek posrednika → 200', 200, prvi.status, prvi.status === 200); }
-  { // odjemalec NI oddal transakcije; poravnavo je oddal posrednik
-    const pv = await trgovec.get(`/x402/payment/${prvi.paymentId}`);
-    const okTx = pv.status === 200 && pv.data && pv.data.posrednik && pv.data.posrednik.status && ['SETTLED', 'SETTLED_UNVERIFIED'].includes(pv.data.posrednik.status);
-    rec('T7 poravnavo vodi POSREDNIK (njegova evidenca)', 'SETTLED', pv.data && pv.data.posrednik ? pv.data.posrednik.status : pv.status, okTx);
+  { prvi = await x402o.payFlow({ url, account, client, headers: H }); rec('T6 valid payment via the facilitator → 200', 200, prvi.status, prvi.status === 200); }
+  { // the client did NOT submit a transaction; the facilitator submitted the settlement
+    const pv = await merchant.get(`/x402/payment/${prvi.paymentId}`);
+    const okTx = pv.status === 200 && pv.data && pv.data.facilitator && pv.data.facilitator.status && ['SETTLED', 'SETTLED_UNVERIFIED'].includes(pv.data.facilitator.status);
+    rec('T7 the FACILITATOR performs the settlement (its own record)', 'SETTLED', pv.data && pv.data.facilitator ? pv.data.facilitator.status : pv.status, okTx);
   }
-  { // ponovitev → predvajanje pri trgovcu, posrednik ne poravna drugič
+  { // repeat → replay at the merchant, the facilitator does not settle a second time
     const r = await x402o.payFlow({ url, account, client, headers: H, reuseHeaders: prvi.signedHeaders, paymentId: prvi.paymentId });
-    rec('T8 ponovitev → predvajanje, ista poravnava', 'replay', r.replayed ? 'replay' : r.status, r.status === 200 && r.replayed && r.paymentResponse && r.paymentResponse.txHash === prvi.paymentResponse.txHash);
+    rec('T8 repeat → replay, same settlement', 'replay', r.replayed ? 'replay' : r.status, r.status === 200 && r.replayed && r.paymentResponse && r.paymentResponse.txHash === prvi.paymentResponse.txHash);
   }
-  { // pokvarjen podpis → 402
+  { // corrupted signature → 402
     const r = await x402o.payFlow({ url, account, client, headers: H, mutateAuthorization: (a) => { a.value = '1'; } });
-    rec('T9 pokvarjeno pooblastilo → 402', 402, r.status, r.status === 402);
+    rec('T9 corrupted authorisation → 402', 402, r.status, r.status === 402);
   }
-  { // sočasni dvojniki → ena poravnava
+  { // concurrent duplicates → one settlement
     const sig = await x402o.payFlow({ url, account, client, headers: H });
     const runs = await Promise.all(Array.from({ length: 4 }, () => x402o.payFlow({ url, account, client, headers: H, reuseHeaders: sig.signedHeaders, paymentId: sig.paymentId })));
     const hashes = new Set([sig.paymentResponse && sig.paymentResponse.txHash, ...runs.map((r) => r.paymentResponse && r.paymentResponse.txHash)].filter(Boolean));
-    rec('T10 sočasni dvojniki → ena poravnava', '1 hash', `${hashes.size} hash`, hashes.size === 1);
+    rec('T10 concurrent duplicates → one settlement', '1 hash', `${hashes.size} hash`, hashes.size === 1);
   }
-  { // nedosegljiv posrednik → jasna napaka, brez sesutja trgovca
-    // (simulacija: neposredno vprašamo trgovca, ki naj vrne 402 z razlogom, če posrednik pade —
-    //  tu preverimo le, da trgovec preživi neveljaven payload)
-    const r = await trgovec.get('/x402/tx/reading', { headers: { 'PAYMENT-SIGNATURE': 'ne-base64!' } });
-    rec('T11 neveljaven PAYMENT-SIGNATURE → 402, ne 500', 402, r.status, r.status === 402);
+  { // unreachable facilitator → a clear error, without crashing the merchant
+    // (simulation: we ask the merchant directly, which should return 402 with a reason if the facilitator goes down —
+    //  here we only check that the merchant survives an invalid payload)
+    const r = await merchant.get('/x402/tx/reading', { headers: { 'PAYMENT-SIGNATURE': 'not-base64!' } });
+    rec('T11 invalid PAYMENT-SIGNATURE → 402, not 500', 402, r.status, r.status === 402);
   }
 
   const okAll = results.filter((x) => x.ok).length;
-  banner(`REZULTAT · ${okAll}/${results.length} uspešnih`);
-  const csvOut = path.join(__dirname, '..', 'meritve', 'x402_posrednik_varnost.csv');
+  banner(`RESULT · ${okAll}/${results.length} passed`);
+  const csvOut = path.join(__dirname, '..', 'measurements', 'x402_facilitator_varnost.csv');
   fs.mkdirSync(path.dirname(csvOut), { recursive: true });
-  fs.writeFileSync(csvOut, 'test,pricakovano,dejansko,uspeh,opomba\n' +
+  fs.writeFileSync(csvOut, 'test,expected,actual,passed,note\n' +
     results.map((x) => [JSON.stringify(x.ime), x.prc, x.dej, x.ok ? 1 : 0, JSON.stringify(x.op)].join(',')).join('\n') + '\n');
   console.log(`  CSV: ${path.relative(process.cwd(), csvOut)}`);
   if (okAll !== results.length) process.exitCode = 1;
@@ -593,11 +594,11 @@ async function runX402Security() {
     if (X402 && SECURITY) await runX402Security();
     else if (X402) await runX402Tx();
     else if (SECURITY) await runSecurity();
-    else if (TOK === 'merjeno') await runMerjeno();
+    else if (TOK === 'metered') await runMetered();
     else await runTx();
   } catch (e) {
     console.error(`\n❌ ${e.message}`);
-    if (e.code === 'ECONNREFUSED') console.error(`   Ali tečeta oba procesa? trgovec=${MERCHANT_URL} posrednik=${POSREDNIK_URL}`);
+    if (e.code === 'ECONNREFUSED') console.error(`   Are both processes running? merchant=${MERCHANT_URL} facilitator=${FACILITATOR_URL}`);
     process.exitCode = 1;
   }
 })();

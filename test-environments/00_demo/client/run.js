@@ -1,20 +1,20 @@
 #!/usr/bin/env node
 
 /**
- * X402 Client - END-TO-END Implementation (ZDRUŽENI TOK)
+ * X402 Client - END-TO-END Implementation (MERGED FLOW)
  *
- * Klient za X402 plačilni protokol z PRAVIMI Ethereum transakcijami na Sepolia testnet.
- * BREZ facilitatorja - direktna komunikacija s hosting serverjem.
+ * Client for the X402 payment protocol with REAL Ethereum transactions on the Sepolia testnet.
+ * WITHOUT a facilitator - direct communication with the hosting server.
  *
- * Združeni tok: na žici sta natanko DVA para zahteva/odgovor:
- *   1. GET /service                          → 402 Payment Required (JSON račun)
+ * Merged flow: exactly TWO request/response pairs go over the wire:
+ *   1. GET /service                          → 402 Payment Required (JSON invoice)
  *   2. POST /service {requestId, txHash, prompt} → 200 OK {response, proofToken}
  *
- * Argumenti:
- *   --prompt <besedilo>   vprašanje za AI (privzeto demo vprašanje)
- *   --pause-ms <n>        premor med izmenjavama (preglednejši zajem v Wiresharku)
- *   --mock                brez prave transakcije (par s strežnikovim MOCK_VERIFY=true)
- *   --ack                 opcijski 3. par: GET + X-Payment → potrditev avtorizacije
+ * Arguments:
+ *   --prompt <text>       question for the AI (defaults to the demo question)
+ *   --pause-ms <n>        pause between exchanges (cleaner capture in Wireshark)
+ *   --mock                no real transaction (pair with the server's MOCK_VERIFY=true)
+ *   --ack                 optional 3rd pair: GET + X-Payment → authorization confirmation
  */
 
 const axios = require('axios');
@@ -24,7 +24,7 @@ const crypto = require('crypto');
 const { ethers } = require('ethers');
 
 // ============================================================================
-// KONFIGURACIJA
+// CONFIGURATION
 // ============================================================================
 const configFile = path.join(__dirname, 'config.json');
 let config = {
@@ -43,7 +43,7 @@ const endpoint = process.env.ENDPOINT || config.ENDPOINT;
 const NETWORK = config.NETWORK || 'sepolia';
 const RPC_URL = config.RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com';
 
-// Argumenti ukazne vrstice
+// Command-line arguments
 const argv = process.argv.slice(2);
 const has = (flag) => argv.includes(flag);
 const val = (flag, dflt) => {
@@ -54,21 +54,21 @@ const val = (flag, dflt) => {
 const MOCK = has('--mock');
 const ACK = has('--ack');
 const PAUSE_MS = parseInt(val('--pause-ms', '0'), 10) || 0;
-const PROMPT = val('--prompt', 'Pozdravljen! V enem stavku povzemi, kaj je protokol x402.');
+const PROMPT = val('--prompt', 'Hello! In one sentence, summarise what the x402 protocol is.');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const pause = async (label) => {
   if (PAUSE_MS > 0) {
-    console.log(`⏸  Premor ${PAUSE_MS} ms (${label})...`);
+    console.log(`⏸  Pausing ${PAUSE_MS} ms (${label})...`);
     await sleep(PAUSE_MS);
   }
 };
 
-// Naloži denarnico
+// Load the wallet
 const walletFile = path.join(__dirname, 'wallet.json');
 if (!fs.existsSync(walletFile)) {
-  console.error('❌ Napaka: wallet.json ne obstaja!');
-  console.error('   Zaženi: node ../generate-wallet.js');
+  console.error('❌ Error: wallet.json does not exist!');
+  console.error('   Run: node ../generate-wallet.js');
   process.exit(1);
 }
 
@@ -77,61 +77,61 @@ const provider = new ethers.JsonRpcProvider(RPC_URL);
 const wallet = new ethers.Wallet(walletData.privateKey, provider);
 
 console.log('\n╔════════════════════════════════════════════════════════════╗');
-console.log('║   X402 Klient - ZDRUŽENI TOK (brez facilitatorja)        ║');
+console.log('║   X402 Client - MERGED FLOW (no facilitator)              ║');
 console.log('╚════════════════════════════════════════════════════════════╝\n');
 
-console.log('Konfigurirano:');
+console.log('Configuration:');
 console.log(`  Merchant:    ${MERCHANT_URL}`);
 console.log(`  Endpoint:    ${endpoint}`);
-console.log(`  Omrežje:     ${NETWORK}`);
-console.log(`  Denarnica:   ${wallet.address}`);
-console.log(`  Način:       ${MOCK ? 'MOCK (brez prave transakcije)' : 'REALNO (Sepolia)'}`);
+console.log(`  Network:     ${NETWORK}`);
+console.log(`  Wallet:      ${wallet.address}`);
+console.log(`  Mode:        ${MOCK ? 'MOCK (no real transaction)' : 'REAL (Sepolia)'}`);
 console.log(`  Prompt:      ${PROMPT}`);
 console.log('');
 
 async function runPayment() {
   if (!MOCK) {
     console.log('════════════════════════════════════════════════════════════');
-    console.log('KORAK 1: Preveri balance denarnice');
+    console.log('STEP 1: Check the wallet balance');
     console.log('════════════════════════════════════════════════════════════\n');
 
     const balance = await provider.getBalance(wallet.address);
     const balanceEth = ethers.formatEther(balance);
-    console.log(`Trenutni balance: ${balanceEth} ETH`);
+    console.log(`Current balance: ${balanceEth} ETH`);
 
     if (parseFloat(balanceEth) < 0.001) {
-      console.error('\n❌ Napaka: Premalo ETH v denarnici!');
-      console.error(`   Tvoj naslov: ${wallet.address}`);
-      console.error('   Naloži vsaj 0.01 ETH iz faucet-a:');
+      console.error('\n❌ Error: Not enough ETH in the wallet!');
+      console.error(`   Your address: ${wallet.address}`);
+      console.error('   Load at least 0.01 ETH from a faucet:');
       console.error('   https://sepoliafaucet.com');
       process.exit(1);
     }
   }
 
   console.log('\n════════════════════════════════════════════════════════════');
-  console.log('KORAK 2: Zahtevaj zaščiten vir (brez plačila) → 402');
+  console.log('STEP 2: Request the protected resource (no payment) → 402');
   console.log('════════════════════════════════════════════════════════════\n');
 
   let payment;
   try {
-    // Poskusi dostopati brez plačila - pričakujemo 402
+    // Try to access without payment - we expect 402
     await axios.get(`${MERCHANT_URL}${endpoint}`, {
       headers: { 'X-Payer': wallet.address }
     });
-    console.error('❌ Napaka: Dobil 200 OK namesto 402 Payment Required!');
+    console.error('❌ Error: Got 200 OK instead of 402 Payment Required!');
     process.exit(1);
   } catch (err) {
     if (!err.response || err.response.status !== 402) {
-      console.error('❌ Napaka pri dostopu do strežnika:', err.message);
-      console.error('\nPreverite:');
-      console.error('  1. Ali je strežnik zagnan?');
-      console.error('  2. Ali je IP naslov pravilen?');
-      console.error('  3. Ali firewall dovoli povezave?');
+      console.error('❌ Error accessing the server:', err.message);
+      console.error('\nCheck:');
+      console.error('  1. Is the server running?');
+      console.error('  2. Is the IP address correct?');
+      console.error('  3. Does the firewall allow connections?');
       process.exit(1);
     }
 
-    console.log('✓ Prejeto: 402 Payment Required');
-    console.log('\nPlačilni podatki:');
+    console.log('✓ Received: 402 Payment Required');
+    console.log('\nPayment details:');
     console.log(JSON.stringify(err.response.data.payment || err.response.data, null, 2));
 
     payment = err.response.data.payment || err.response.data;
@@ -142,43 +142,43 @@ async function runPayment() {
   const amountStr = String(payment.amount || payment.price || '0');
 
   console.log('\n════════════════════════════════════════════════════════════');
-  console.log(`KORAK 3: ${MOCK ? 'MOCK transakcija (brez verige)' : 'Pošlji PRAVO transakcijo na blockchain'}`);
+  console.log(`STEP 3: ${MOCK ? 'MOCK transaction (no chain)' : 'Send a REAL transaction to the blockchain'}`);
   console.log('════════════════════════════════════════════════════════════\n');
 
   let txHash;
   let blockNumber = null;
   if (MOCK) {
-    // Fabriciran hash — strežnik z MOCK_VERIFY=true verige ne bere
+    // Fabricated hash — a server with MOCK_VERIFY=true does not read the chain
     txHash = '0x' + crypto.randomBytes(32).toString('hex');
-    console.log(`✓ Fabriciran TX hash (mock): ${txHash}`);
+    console.log(`✓ Fabricated TX hash (mock): ${txHash}`);
   } else {
-    console.log(`Pošiljam ${amountStr} ETH na ${to}...`);
-    console.log('Čakam na potrditev transakcije...\n');
+    console.log(`Sending ${amountStr} ETH to ${to}...`);
+    console.log('Waiting for transaction confirmation...\n');
 
-    // Pošlji PRAVO transakcijo (direktno na verigo, mimo merchant strežnika)
+    // Send a REAL transaction (directly to the chain, bypassing the merchant server)
     const tx = await wallet.sendTransaction({
       to: to,
       value: ethers.parseEther(amountStr)
     });
 
-    console.log(`✓ Transakcija poslana!`);
+    console.log(`✓ Transaction sent!`);
     console.log(`  TX Hash: ${tx.hash}`);
-    console.log(`  Ogled: https://sepolia.etherscan.io/tx/${tx.hash}`);
-    console.log('\n⏳ Čakam na potrditev...');
+    console.log(`  View: https://sepolia.etherscan.io/tx/${tx.hash}`);
+    console.log('\n⏳ Waiting for confirmation...');
 
     const receipt = await tx.wait();
-    console.log(`✓ Transakcija potrjena! (Block: ${receipt.blockNumber})`);
+    console.log(`✓ Transaction confirmed! (Block: ${receipt.blockNumber})`);
     txHash = tx.hash;
     blockNumber = receipt.blockNumber;
   }
 
-  await pause('pred združeno izmenjavo');
+  await pause('before the merged exchange');
 
   console.log('\n════════════════════════════════════════════════════════════');
-  console.log('KORAK 4: ZDRUŽENA IZMENJAVA — POST txHash + prompt → 200 OK');
+  console.log('STEP 4: MERGED EXCHANGE — POST txHash + prompt → 200 OK');
   console.log('════════════════════════════════════════════════════════════\n');
 
-  console.log('Pošiljam dokazilo in vprašanje v ENEM zahtevku...');
+  console.log('Sending the proof and the question in ONE request...');
   const serviceResp = await axios.post(`${MERCHANT_URL}${endpoint}`, {
     requestId: requestId,
     txHash: txHash,
@@ -187,25 +187,25 @@ async function runPayment() {
     prompt: PROMPT
   });
 
-  console.log('\n✓ Server je preveril transakcijo in vrnil vsebino + žeton:');
+  console.log('\n✓ The server verified the transaction and returned the content + token:');
   console.log(JSON.stringify(serviceResp.data, null, 2));
 
   const proofToken = serviceResp.data.proofToken;
   if (!proofToken) {
-    console.error('\n❌ Server ni vrnil proof tokena!');
+    console.error('\n❌ The server did not return a proof token!');
     process.exit(1);
   }
 
-  console.log('\n─── AI ODGOVOR ─────────────────────────────────────────────');
+  console.log('\n─── AI RESPONSE ────────────────────────────────────────────');
   console.log(serviceResp.data.response);
   console.log('────────────────────────────────────────────────────────────');
   console.log(`\n✓ Proof token: ${proofToken}`);
 
   if (ACK) {
-    await pause('pred potrditvijo avtorizacije');
+    await pause('before the authorization confirmation');
 
     console.log('\n════════════════════════════════════════════════════════════');
-    console.log('KORAK 5 (opcijski): GET + X-Payment → potrditev avtorizacije');
+    console.log('STEP 5 (optional): GET + X-Payment → authorization confirmation');
     console.log('════════════════════════════════════════════════════════════\n');
 
     const ackResp = await axios.get(`${MERCHANT_URL}${endpoint}`, {
@@ -215,33 +215,33 @@ async function runPayment() {
       }
     });
 
-    console.log('✓ Potrditev avtorizacije:');
+    console.log('✓ Authorization confirmation:');
     console.log(JSON.stringify(ackResp.data, null, 2));
   }
 
   console.log('\n╔════════════════════════════════════════════════════════════╗');
-  console.log('║   ✓ PLAČILO USPEŠNO ZAKLJUČENO! (ZDRUŽENI TOK)           ║');
+  console.log('║   ✓ PAYMENT COMPLETED SUCCESSFULLY! (MERGED FLOW)         ║');
   console.log('╚════════════════════════════════════════════════════════════╝\n');
 
   if (!MOCK) {
-    console.log('Transakcija na blockchain:');
+    console.log('Transaction on the blockchain:');
     console.log(`  ${txHash}`);
     console.log(`  https://sepolia.etherscan.io/tx/${txHash}`);
     console.log('');
   }
-  console.log('Poti HTTP zahtevkov (ZDRUŽENI TOK):');
-  console.log(`  1. Klient → Merchant: GET → 402 Payment Required (JSON račun)`);
-  console.log(`  2. Klient → Blockchain: TX → potrditev (direktno v merchant wallet)${MOCK ? ' [MOCK: preskočeno]' : ''}`);
-  console.log(`  3. Klient → Merchant: POST txHash + prompt → verifikacija on-chain → 200 OK (odgovor + žeton)`);
+  console.log('HTTP request paths (MERGED FLOW):');
+  console.log(`  1. Client → Merchant: GET → 402 Payment Required (JSON invoice)`);
+  console.log(`  2. Client → Blockchain: TX → confirmation (directly into the merchant wallet)${MOCK ? ' [MOCK: skipped]' : ''}`);
+  console.log(`  3. Client → Merchant: POST txHash + prompt → on-chain verification → 200 OK (response + token)`);
   if (ACK) {
-    console.log(`  4. Klient → Merchant: GET + X-Payment → potrditev avtorizacije`);
+    console.log(`  4. Client → Merchant: GET + X-Payment → authorization confirmation`);
   }
   console.log('');
-  console.log('⚡ Brez posrednika - samo 2 komponenti, 2 para HTTP sporočil!');
+  console.log('⚡ No facilitator - just 2 components, 2 pairs of HTTP messages!');
   console.log('');
 }
 
-// Zaženi
+// Run
 runPayment().catch(err => {
   if (err.response) {
     console.error(`Fatal error: HTTP ${err.response.status}`);

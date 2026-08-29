@@ -1,11 +1,11 @@
 # syntax=docker/dockerfile:1
-# Slika za mapo 05_spletisce (vzorec je enak kot testna-okolja/00_demo/server/Dockerfile).
+# Image for the 05_website_direct folder (the pattern is the same as test-environments/00_demo/server/Dockerfile).
 FROM node:20-alpine AS deps
 WORKDIR /app
 RUN apk add --no-cache python3 make g++ \
  && ln -sf python3 /usr/bin/python
 COPY package.json package-lock.json* ./
-# better-sqlite3 se prevede iz izvorne kode, zato zgornji build paketi.
+# better-sqlite3 is compiled from source, hence the build packages above.
 RUN if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi
 
 FROM node:20-alpine AS runtime
@@ -15,10 +15,10 @@ RUN apk add --no-cache curl tini \
 
 ENV NODE_ENV=production \
     PORT=8080 \
-    DB_PATH=/app/data/spletisce_neposredno.db
+    DB_PATH=/app/data/website_direct.db
 
 COPY --from=deps /app/node_modules ./node_modules
-COPY server.js runner.js db.js auth.js x402.js db_x402.js x402-odjemalec.js package.json ./
+COPY server.js runner.js db.js auth.js x402.js db_x402.js x402-client.js package.json ./
 COPY public ./public
 
 RUN mkdir -p /app/data \

@@ -2,8 +2,8 @@
 
 /**
  * ============================================================================
- *  MOCK IoT NAPRAVA — METERED PREPAID SESSION (credit + budget + validity)
- *  (folder 03_avtomatska_placila_dobroimetje)
+ *  MOCK IoT DEVICE — METERED PREPAID SESSION (credit + budget + validity)
+ *  (folder 03_machine_payments_prepaid)
  * ============================================================================
  *
  *  Same IoT scenario as folder 02, but ONE on-chain top-up opens a prepaid
@@ -11,9 +11,9 @@
  *  debited locally — no new transaction per reading. This is the metered model,
  *  extended with explicit session semantics:
  *
- *     dobroimetje (credit)  = deposit_wei      (remaining = deposit - spent)
- *     proračun    (budget)  = budget_wei       (spent may never exceed it)
- *     veljavnost  (validity)= expires_at       (debits rejected after TTL)
+ *     credit    = deposit_wei      (remaining = deposit - spent)
+ *     budget    = budget_wei       (spent may never exceed it)
+ *     validity  = expires_at       (debits rejected after TTL)
  *
  *  Endpoints:
  *    POST /session/open        verify top-up tx  -> open session
@@ -42,8 +42,8 @@ const { z } = require('zod');
 
 const db = require('./db');
 const authLib = require('./auth');
-// Uradni x402 v2 — VZPOREDNI način financiranja seje (X402_MODE=off|self).
-// x402 se uporabi SAMO za polnitev (faza A); bremenitve ostanejo lokalne.
+// Official x402 v2 — PARALLEL session-funding mode (X402_MODE=off|self).
+// x402 is used ONLY for the top-up (phase A); debits stay local.
 const x402 = require('./x402');
 const dbx = x402.enabled ? require('./db_x402') : null;
 
@@ -110,18 +110,18 @@ const limiter = rateLimit({ windowMs: 60_000, max: parseInt(process.env.RATE_PER
 const openLimiter = rateLimit({ windowMs: 60_000, max: parseInt(process.env.RATE_OPEN_PER_MIN || '60', 10), standardHeaders: true, legacyHeaders: false });
 const sMs = (req) => (performance.now() - req.tStart).toFixed(3);
 
-// ══════════ SKRBNIŠKA PRIJAVA — naprava je zaprta ════════════════════════════
-// Javna ostaneta samo /prijava (+ /odjava) in /health. Vse ostalo (/config,
-// /session/open, /session/:id, /reading-metered) zahteva prijavo ali strojni žeton.
-// Merilni agent se predstavi z glavo `Authorization: Bearer <ZETON>`; žeton dobiš
-// na napravi z:  grep ZETON data/admin-credentials.txt
-// S tem je zaprta tudi pot /session/:id, ki je prej brez prijave razkrivala
-// naslov plačnika in stanje dobroimetja.
+// ══════════ ADMIN LOGIN — the device is locked down ══════════════════════════
+// Only /login (+ /logout) and /health remain public. Everything else (/config,
+// /session/open, /session/:id, /reading-metered) requires a login or a machine token.
+// The measurement agent identifies itself with the `Authorization: Bearer <TOKEN>`
+// header; obtain the token on the device with:  grep TOKEN data/admin-credentials.txt
+// This also closes the /session/:id path, which previously exposed the payer
+// address and the credit balance without a login.
 const auth = authLib.create({
   dataDir: path.join(__dirname, 'data'),
-  appName: 'X402 IoT naprava — merjena seja (mapa 03)',
+  appName: 'X402 IoT device — metered session (folder 03)',
   logger,
-  homePath: '/config'          // naprava nima spletne strani; po prijavi pokaži nastavitve
+  homePath: '/config'          // the device has no web page; show the config after login
 });
 auth.mount(app);
 app.use(auth.requireAdmin);
@@ -164,7 +164,7 @@ app.post('/session/open', openLimiter, async (req, res) => {
   if (!parsed.success) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() }); }
   const { txHash, payerAddress, budgetWei, ttlSeconds, mockDepositWei } = parsed.data;
 
-  if (db.isTxRedeemed(txHash)) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Transakcija je že bila unovčena' }); }
+  if (db.isTxRedeemed(txHash)) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Transaction has already been redeemed' }); }
 
   let verification, chainReadMs = 0;
   if (MOCK_VERIFY) {
@@ -178,18 +178,18 @@ app.post('/session/open', openLimiter, async (req, res) => {
     chainReadMs = performance.now() - t0;
     res.setHeader('X-Chain-Read-Ms', chainReadMs.toFixed(3));
   }
-  if (!verification.verified) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Preverjanje transakcije ni uspelo', message: verification.error }); }
+  if (!verification.verified) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Transaction verification failed', message: verification.error }); }
   const tx = verification.tx;
-  if (tx.status !== 1) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Transakcija na verigi ni uspela' }); }
-  if (tx.to?.toLowerCase() !== DEVICE_WALLET.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Napačen prejemnik' }); }
-  if (tx.from.toLowerCase() !== payerAddress.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Neujemanje plačnika' }); }
+  if (tx.status !== 1) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'On-chain transaction failed' }); }
+  if (tx.to?.toLowerCase() !== DEVICE_WALLET.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Wrong recipient' }); }
+  if (tx.from.toLowerCase() !== payerAddress.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Payer mismatch' }); }
   const deposit = BigInt(tx.value);
-  if (deposit < MIN_TOPUP_WEI) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Prenizek polog' }); }
+  if (deposit < MIN_TOPUP_WEI) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Deposit too low' }); }
 
-  // budget (proračun): default = full deposit; may be lower, never higher.
+  // budget: default = full deposit; may be lower, never higher.
   let budget = deposit;
   if (budgetWei) { const b = BigInt(budgetWei); budget = b < deposit ? b : deposit; }
-  // validity (čas veljavnosti): bounded TTL.
+  // validity: bounded TTL.
   const ttl = Math.min(ttlSeconds || SESSION_TTL_DEFAULT, SESSION_TTL_MAX);
 
   const sessionId = `sess_${uuidv4()}`;
@@ -197,7 +197,7 @@ app.post('/session/open', openLimiter, async (req, res) => {
   try {
     session = db.openSession({ sessionId, payerAddress: tx.from, resource: RESOURCE, depositWei: deposit, budgetWei: budget, txHash: tx.hash, ttlSeconds: ttl });
   } catch (err) {
-    if (err.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Transakcija je že bila unovčena' }); }
+    if (err.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Transaction has already been redeemed' }); }
     throw err;
   }
   req.log.info({ sessionId, deposit: deposit.toString(), budget: budget.toString(), ttl }, 'session opened');
@@ -209,7 +209,7 @@ app.post('/session/open', openLimiter, async (req, res) => {
 app.get('/session/:id', (req, res) => {
   const s = db.getSession(req.params.id);
   res.setHeader('X-Server-Ms', sMs(req));
-  if (!s) return res.status(404).json({ error: 'Seja ne obstaja' });
+  if (!s) return res.status(404).json({ error: 'Session does not exist' });
   res.json({ success: true, session: db.sessionView(s) });
 });
 
@@ -229,28 +229,28 @@ app.get('/reading-metered', limiter, (req, res) => {
         mode: 'prepaid-session', openEndpoint: '/session/open',
         priceWeiPerCall: PRICE_WEI_PER_CALL.toString(), priceWeiPerByte: PRICE_WEI_PER_BYTE.toString(), minPriceWei: MIN_PRICE_WEI.toString(),
         signedHeaders: ['X-Payer', 'X-Session', 'X-Nonce', 'X-Signature', 'X-Max-Wei'],
-        message: 'Podpiši (EIP-191): x402-debit:{payer}:{session}:{nonce}:{path}:{maxWei}'
+        message: 'Sign (EIP-191): x402-debit:{payer}:{session}:{nonce}:{path}:{maxWei}'
       }
     });
   }
 
   let payerAddr;
-  try { payerAddr = ethers.getAddress(payer); } catch { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Neveljaven naslov plačnika' }); }
+  try { payerAddr = ethers.getAddress(payer); } catch { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Invalid payer address' }); }
 
   // nonce freshness window (nonce format: <epoch-ms>-<random>)
   const nonceTs = parseInt(String(nonce).split('-')[0], 10);
-  if (!Number.isFinite(nonceTs) || Math.abs(Date.now() - nonceTs) > DEBIT_MAX_AGE_MS) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Zastarel ali napačen nonce' }); }
+  if (!Number.isFinite(nonceTs) || Math.abs(Date.now() - nonceTs) > DEBIT_MAX_AGE_MS) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Stale or invalid nonce' }); }
 
   // EIP-191 signature check
   let recovered;
   try { recovered = ethers.verifyMessage(debitMessage(payerAddr, sessionId, nonce, req.path, maxWei), signature); }
-  catch { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Napačen podpis' }); }
-  if (recovered.toLowerCase() !== payerAddr.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Podpis se ne ujema s plačnikom' }); }
+  catch { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Invalid signature' }); }
+  if (recovered.toLowerCase() !== payerAddr.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Signature does not match the payer' }); }
 
   // session must belong to this payer
   const s = db.getSession(sessionId);
-  if (!s) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(404).json({ error: 'Seja ne obstaja' }); }
-  if (s.payer_address.toLowerCase() !== payerAddr.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Seja ne pripada temu plačniku' }); }
+  if (!s) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(404).json({ error: 'Session does not exist' }); }
+  if (s.payer_address.toLowerCase() !== payerAddr.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Session does not belong to this payer' }); }
 
   // price the reading, cap at signed maximum
   const reading = nextReading();
@@ -258,16 +258,16 @@ app.get('/reading-metered', limiter, (req, res) => {
   const bytes = Buffer.byteLength(body);
   let price = PRICE_WEI_PER_CALL + PRICE_WEI_PER_BYTE * BigInt(bytes);
   if (price < MIN_PRICE_WEI) price = MIN_PRICE_WEI;
-  if (price > BigInt(maxWei)) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Cena presega podpisani maksimum', priceWei: price.toString(), maxWei }); }
+  if (price > BigInt(maxWei)) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Price exceeds the signed maximum', priceWei: price.toString(), maxWei }); }
 
   const result = db.debit({ sessionId, amountWei: price, nonce, requestPath: req.path, bytes });
   if (!result.ok) {
     res.setHeader('X-Server-Ms', sMs(req));
-    if (result.reason === 'nonce_reused') return res.status(403).json({ error: 'Nonce že uporabljen (replay zavrnjen)' });
-    if (result.reason === 'session_expired') return res.status(403).json({ error: 'Seja je potekla (čas veljavnosti)' });
-    if (result.reason === 'session_closed') return res.status(403).json({ error: 'Seja je zaprta' });
-    if (result.reason === 'budget_exceeded') return res.status(402).json({ error: 'Presežen proračun seje', reason: 'budget_exceeded', budgetRemainingWei: (result.budgetRemainingWei ?? 0n).toString(), priceWei: price.toString() });
-    return res.status(402).json({ error: 'Nezadostno dobroimetje', reason: 'insufficient_balance', balanceWei: (result.balanceWei ?? 0n).toString(), priceWei: price.toString() });
+    if (result.reason === 'nonce_reused') return res.status(403).json({ error: 'Nonce already used (replay rejected)' });
+    if (result.reason === 'session_expired') return res.status(403).json({ error: 'Session expired (validity window)' });
+    if (result.reason === 'session_closed') return res.status(403).json({ error: 'Session is closed' });
+    if (result.reason === 'budget_exceeded') return res.status(402).json({ error: 'Session budget exceeded', reason: 'budget_exceeded', budgetRemainingWei: (result.budgetRemainingWei ?? 0n).toString(), priceWei: price.toString() });
+    return res.status(402).json({ error: 'Insufficient credit', reason: 'insufficient_balance', balanceWei: (result.balanceWei ?? 0n).toString(), priceWei: price.toString() });
   }
 
   req.log.info({ sessionId, priceWei: price.toString(), balanceWei: result.balanceWei.toString() }, 'metered debit');
@@ -279,17 +279,17 @@ app.get('/reading-metered', limiter, (req, res) => {
   res.type('application/json').send(body);
 });
 
-// ══════════ x402 v2 (VZPOREDNI NAČIN) — SAMO financiranje seje (faza A) ═════
-// C2: ENA x402 exact poravnava (ETH, Ethereum Sepolia; testno — poravnava
-// sintetična/mock) odpre predplačniško sejo; vseh N bremenitev nato teče
-// LOKALNO s podpisi EIP-191 — NIČ dodatnih poravnav na verigi. Lokalni
-// merilni protokol NI x402 (in se tako tudi ne imenuje): sporočilo v2 je
-// različica lastnega formata iz te mape, z atomskimi enotami žetona namesto
-// wei ter vpletenim omrežjem in žetonom, da podpisa ni mogoče predvajati med
-// denominacijama.
+// ══════════ x402 v2 (PARALLEL MODE) — session funding ONLY (phase A) ════════
+// C2: ONE x402 exact settlement (ETH, Ethereum Sepolia; test — the settlement
+// is synthetic/mock) opens a prepaid session; all N debits then run LOCALLY
+// with EIP-191 signatures — NO additional on-chain settlements. The local
+// metering protocol is NOT x402 (and is not named that way): the v2 message is
+// a variant of this folder's own format, with atomic token units instead of
+// wei and with the network and token woven in, so a signature cannot be
+// replayed across denominations.
 if (x402.enabled) {
-  // Sporočilo bremenitve v2 — LOČENO od podedovanega `x402-debit:{...}:{maxWei}`.
-  // Vezava: plačnik, seja, nonce, pot, maksimum V ATOMSKIH ENOTAH, omrežje, žeton.
+  // v2 debit message — SEPARATE from the legacy `x402-debit:{...}:{maxWei}`.
+  // Binds: payer, session, nonce, path, maximum IN ATOMIC UNITS, network, token.
   const asset = x402.resolveAsset();
   function debitMessageV2(payer, sessionId, nonce, reqPath, maxAtomic) {
     return `metered-debit-v2:${payer.toLowerCase()}:${sessionId}:${nonce}:${reqPath}:${maxAtomic}:${x402.config.network}:${asset.address.toLowerCase()}`;
@@ -301,12 +301,13 @@ if (x402.enabled) {
   const { middleware: x402Middleware, x402Route } = x402.buildMiddleware({
     dbx, logger,
     routes: {
-      // plačilo TE poti JE polnitev: 402 izziv nosi znesek pologa
-      'POST /x402/session/open': x402.routeConfig('Odprtje predplačniške seje — x402 exact polnitev (Ethereum Sepolia, ETH — testno)', x402.config.sessionDepositAtomic)
+      // paying for THIS path IS the top-up: the 402 challenge carries the deposit amount
+      'POST /x402/session/open': x402.routeConfig('Prepaid session opening — x402 exact top-up (Ethereum Sepolia, ETH — test)', x402.config.sessionDepositAtomic)
     },
-    // Tok "authorization" poravna PO handlerju: handler sejo samo NAČRTUJE
-    // (req.x402Plan), ustvari pa jo šele uspešna poravnava — tu. Če poravnava
-    // spodleti, odgovor handlerja ni dostavljen in seja nikoli ne nastane.
+    // The "authorization" flow settles AFTER the handler: the handler only PLANS
+    // the session (req.x402Plan); only a successful settlement creates it — here.
+    // If settlement fails, the handler's response is not delivered and the
+    // session never comes into existence.
     onSettled: async ({ payload, requirements, settleResponse, plan }) => {
       if (!plan || !plan.sessionId) return;
       const payer = payload && payload.payload && payload.payload.authorization
@@ -315,10 +316,10 @@ if (x402.enabled) {
         sessionId: plan.sessionId, payerAddress: payer, resource: RES_X402_METERED,
         network: x402.config.network, asset: asset.address, assetDecimals: asset.decimals,
         depositAtomic: plan.depositAtomic, budgetAtomic: plan.budgetAtomic,
-        settleTxHash: settleResponse.transaction || '(neznan)', paymentId: plan.paymentId || null,
+        settleTxHash: settleResponse.transaction || '(unknown)', paymentId: plan.paymentId || null,
         expiresAt: plan.expiresAt
       });
-      logger.info({ sessionId: plan.sessionId, payer, depositAtomic: plan.depositAtomic }, 'x402 seja odprta (po poravnavi)');
+      logger.info({ sessionId: plan.sessionId, payer, depositAtomic: plan.depositAtomic }, 'x402 session opened (after settlement)');
     }
   });
 
@@ -336,7 +337,7 @@ if (x402.enabled) {
 
   app.use(x402Middleware);
 
-  // POST /x402/session/open — x402 zaščitena pot; telo: { budgetAtomic?, ttlSeconds? }
+  // POST /x402/session/open — x402-protected path; body: { budgetAtomic?, ttlSeconds? }
   const openX402Schema = z.object({
     budgetAtomic: z.string().regex(/^\d+$/).optional(),
     ttlSeconds: z.number().int().positive().optional()
@@ -346,10 +347,10 @@ if (x402.enabled) {
     if (!parsed.success) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() }); }
     const ttl = Math.min(parsed.data.ttlSeconds || SESSION_TTL_DEFAULT, SESSION_TTL_MAX);
     let budget = parsed.data.budgetAtomic ? BigInt(parsed.data.budgetAtomic) : DEPOSIT_ATOMIC;
-    if (budget > DEPOSIT_ATOMIC) budget = DEPOSIT_ATOMIC; // proračun ne presega pologa
+    if (budget > DEPOSIT_ATOMIC) budget = DEPOSIT_ATOMIC; // budget may not exceed the deposit
     const sessionId = `xseja_${uuidv4()}`;
     const expiresAt = Date.now() + ttl * 1000;
-    // seja se USTVARI šele v onSettled (po uspešni poravnavi) — tu samo načrt
+    // the session is CREATED only in onSettled (after a successful settlement) — here just the plan
     req.x402Plan = { sessionId, depositAtomic: DEPOSIT_ATOMIC.toString(), budgetAtomic: budget.toString(), expiresAt, paymentId: req.x402PaymentKey || null };
     const pr = x402.readPaymentResponse(res.getHeader('PAYMENT-RESPONSE'));
     res.setHeader('X-Server-Ms', sMs(req));
@@ -361,27 +362,27 @@ if (x402.enabled) {
         network: x402.config.network, expiresAt: new Date(expiresAt).toISOString()
       },
       signMessage: 'metered-debit-v2:{payer}:{session}:{nonce}:{path}:{maxAtomic}:{network}:{asset}',
-      payment: { protokol: 'x402-self', shema: 'exact', txHash: pr ? pr.txHash : null, placnikGasa: 'streznik' }
+      payment: { protocol: 'x402-self', scheme: 'exact', txHash: pr ? pr.txHash : null, gasPayer: 'server' }
     });
   }));
 
   app.get('/x402/session/:id', (req, res) => {
     const s = dbx.getX402Session(req.params.id);
     res.setHeader('X-Server-Ms', sMs(req));
-    if (!s) return res.status(404).json({ error: 'Seja ne obstaja' });
+    if (!s) return res.status(404).json({ error: 'Session does not exist' });
     res.json({ success: true, session: {
       sessionId: s.session_id, payer: s.payer_address, depositAtomic: s.deposit_atomic,
       budgetAtomic: s.budget_atomic, spentAtomic: s.spent_atomic,
       balanceAtomic: (BigInt(s.deposit_atomic) - BigInt(s.spent_atomic)).toString(),
       network: s.network, asset: s.asset, expiresAt: new Date(s.expires_at).toISOString(),
-      settleTxHash: s.settle_tx_hash, steviloBremenitev: dbx.countX402Debits(s.session_id)
+      settleTxHash: s.settle_tx_hash, debitCount: dbx.countX402Debits(s.session_id)
     } });
   });
 
-  // GET /x402/reading-metered — LOKALNA bremenitev x402-financirane seje.
-  // ISTI logični algoritem kot /reading-metered (nonce → podpis → seja →
-  // maksimum → dobroimetje → proračun → atomski odpis), enote pa so ATOMSKE
-  // enote žetona; glave se imenujejo *-Atomic in NIKOLI *-Wei.
+  // GET /x402/reading-metered — LOCAL debit against an x402-funded session.
+  // SAME logical algorithm as /reading-metered (nonce → signature → session →
+  // maximum → credit → budget → atomic write-off), but the units are ATOMIC
+  // token units; headers are named *-Atomic and NEVER *-Wei.
   app.get(RES_X402_METERED, limiter, (req, res) => {
     const payer = req.header('X-Payer');
     const sessionId = req.header('X-Session');
@@ -397,62 +398,62 @@ if (x402.enabled) {
           mode: 'prepaid-session-x402', openEndpoint: '/x402/session/open',
           priceAtomicPerCall: PRICE_ATOMIC_PER_CALL.toString(),
           signedHeaders: ['X-Payer', 'X-Session', 'X-Nonce', 'X-Signature', 'X-Max-Atomic'],
-          message: 'Podpiši (EIP-191): metered-debit-v2:{payer}:{session}:{nonce}:{path}:{maxAtomic}:{network}:{asset}'
+          message: 'Sign (EIP-191): metered-debit-v2:{payer}:{session}:{nonce}:{path}:{maxAtomic}:{network}:{asset}'
         }
       });
     }
 
     let payerAddr;
-    try { payerAddr = ethers.getAddress(payer); } catch { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Neveljaven naslov plačnika' }); }
-    if (!/^\d{1,32}$/.test(String(maxAtomic))) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Neveljaven X-Max-Atomic' }); }
+    try { payerAddr = ethers.getAddress(payer); } catch { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Invalid payer address' }); }
+    if (!/^\d{1,32}$/.test(String(maxAtomic))) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Invalid X-Max-Atomic' }); }
 
     const nonceTs = parseInt(String(nonce).split('-')[0], 10);
-    if (!Number.isFinite(nonceTs) || Math.abs(Date.now() - nonceTs) > DEBIT_MAX_AGE_MS) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Zastarel ali napačen nonce' }); }
+    if (!Number.isFinite(nonceTs) || Math.abs(Date.now() - nonceTs) > DEBIT_MAX_AGE_MS) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Stale or invalid nonce' }); }
 
     let recovered;
     try { recovered = ethers.verifyMessage(debitMessageV2(payerAddr, sessionId, nonce, req.path, maxAtomic), signature); }
-    catch { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Napačen podpis' }); }
-    if (recovered.toLowerCase() !== payerAddr.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Podpis se ne ujema s plačnikom' }); }
+    catch { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Invalid signature' }); }
+    if (recovered.toLowerCase() !== payerAddr.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Signature does not match the payer' }); }
 
     const sx = dbx.getX402Session(sessionId);
-    if (!sx) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(404).json({ error: 'Seja ne obstaja' }); }
-    if (sx.payer_address.toLowerCase() !== payerAddr.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Seja ne pripada temu plačniku' }); }
+    if (!sx) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(404).json({ error: 'Session does not exist' }); }
+    if (sx.payer_address.toLowerCase() !== payerAddr.toLowerCase()) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(403).json({ error: 'Session does not belong to this payer' }); }
 
     const reading = nextReading();
     const price = PRICE_ATOMIC_PER_CALL;
-    if (price > BigInt(maxAtomic)) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Cena presega podpisani maksimum', priceAtomic: price.toString(), maxAtomic }); }
+    if (price > BigInt(maxAtomic)) { res.setHeader('X-Server-Ms', sMs(req)); return res.status(400).json({ error: 'Price exceeds the signed maximum', priceAtomic: price.toString(), maxAtomic }); }
 
     const result = dbx.debitX402({ sessionId, amountAtomic: price.toString(), nonce, requestPath: req.path, bytes: null });
     if (!result.ok) {
       res.setHeader('X-Server-Ms', sMs(req));
-      if (result.reason === 'nonce_reused') return res.status(403).json({ error: 'Nonce že uporabljen (replay zavrnjen)' });
-      if (result.reason === 'session_expired') return res.status(403).json({ error: 'Seja je potekla (čas veljavnosti)' });
-      if (result.reason === 'session_closed') return res.status(403).json({ error: 'Seja je zaprta' });
-      if (result.reason === 'no_session') return res.status(404).json({ error: 'Seja ne obstaja' });
-      if (result.reason === 'budget_exceeded') return res.status(402).json({ error: 'Presežen proračun seje', reason: 'budget_exceeded', budgetRemainingAtomic: result.budgetRemainingAtomic ?? '0', priceAtomic: price.toString() });
-      return res.status(402).json({ error: 'Nezadostno dobroimetje', reason: 'insufficient_balance', balanceAtomic: result.balanceAtomic ?? '0', priceAtomic: price.toString() });
+      if (result.reason === 'nonce_reused') return res.status(403).json({ error: 'Nonce already used (replay rejected)' });
+      if (result.reason === 'session_expired') return res.status(403).json({ error: 'Session expired (validity window)' });
+      if (result.reason === 'session_closed') return res.status(403).json({ error: 'Session is closed' });
+      if (result.reason === 'no_session') return res.status(404).json({ error: 'Session does not exist' });
+      if (result.reason === 'budget_exceeded') return res.status(402).json({ error: 'Session budget exceeded', reason: 'budget_exceeded', budgetRemainingAtomic: result.budgetRemainingAtomic ?? '0', priceAtomic: price.toString() });
+      return res.status(402).json({ error: 'Insufficient credit', reason: 'insufficient_balance', balanceAtomic: result.balanceAtomic ?? '0', priceAtomic: price.toString() });
     }
 
-    req.log.info({ sessionId, priceAtomic: price.toString(), balanceAtomic: result.balanceAtomic }, 'x402 metered debit (lokalno, brez verige)');
+    req.log.info({ sessionId, priceAtomic: price.toString(), balanceAtomic: result.balanceAtomic }, 'x402 metered debit (local, off-chain)');
     res.set('X-Charged-Atomic', price.toString());
     res.set('X-Balance-Atomic', result.balanceAtomic);
     res.set('X-Budget-Remaining-Atomic', result.budgetRemainingAtomic);
     res.set('X-Session-Expires', new Date(sx.expires_at).toISOString());
     res.setHeader('X-Server-Ms', sMs(req));
-    res.json({ success: true, reading, metered: { chargedAtomic: price.toString(), balanceAtomic: result.balanceAtomic, veriga: false } });
+    res.json({ success: true, reading, metered: { chargedAtomic: price.toString(), balanceAtomic: result.balanceAtomic, chain: false } });
   });
 
-  logger.info({ x402: x402.summary() }, 'x402 v2 financiranje seje priklopljeno (/x402/session/open — SAMO polnitev; bremenitve lokalne)');
+  logger.info({ x402: x402.summary() }, 'x402 v2 session funding attached (/x402/session/open — top-up ONLY; debits stay local)');
 }
 
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
-  // Napake razčlenjevalnika telesa (`express.json`) nosijo svoj status 400: pokvarjen
-  // JSON je napaka odjemalca in ne odpoved strežnika.
+  // Body-parser errors (`express.json`) carry their own 400 status: malformed
+  // JSON is a client error, not a server failure.
   const code = Number.isInteger(err.status) && err.status >= 400 && err.status < 500 ? err.status : 500;
   const log = req.log || logger;
   if (code === 500) log.error({ err: err.message }, 'Unhandled');
-  else log.warn({ err: err.message, code }, 'Slaba zahteva');
+  else log.warn({ err: err.message, code }, 'Bad request');
   if (!res.headersSent) res.status(code).json(code === 500 ? { error: 'Internal server error' } : { error: 'Bad request', message: err.message });
 });
 

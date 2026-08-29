@@ -1,17 +1,18 @@
-# Rezultati meritev posredniške veje
+# Measurement results for the facilitator branch
 
-Ta mapa je ob prevzemu **prazna** — datoteke nastanejo šele, ko sam poženeš meritve
-(glej [`../README.md`](../README.md)).
+On checkout this folder is **empty** — the files appear only once you run the measurements
+yourself (see [`../README.md`](../README.md)).
 
-| Datoteka | Nastane z | Poskus |
+| File | Created by | Experiment |
 |---|---|---|
-| `posrednik_tx_mock.csv` / `posrednik_tx_real.csv` | `node agent.js --tx` | **plačilo na odčitek** |
-| `posrednik_merjeno_mock.csv` / `..._real.csv` | `node agent.js --merjeno` | **merjena seja** |
-| `*_povzetek.json` | isto | strnjena statistika teka |
-| `posrednik_varnost.csv` | `node agent.js --security` | popravki napak 1, 2, 3, 5 + zloraba |
-| `e9_trgovec.csv`, `e9_posrednik.csv`, `e9_neposredno.csv` | `node count-proxy.js` | **število sporočil** |
+| `facilitator_tx_mock.csv` / `facilitator_tx_real.csv` | `node agent.js --tx` | **payment per reading** |
+| `facilitator_metered_mock.csv` / `..._real.csv` | `node agent.js --metered` | **metered session** |
+| `*_summary.json` | the same | condensed run statistics |
+| `facilitator_security.csv` | `node agent.js --security` | fixes for bugs 1, 2, 3, 5 + abuse |
+| `e9_merchant.csv`, `e9_facilitator.csv`, `e9_neposredno.csv` | `node count-proxy.js` | **message count** |
 
-> **CSV se DOPOLNJUJE, ne prepisuje.** Pred ponovitvijo istega poskusa staro datoteko
-> izbriši, sicer se dva teka zlijeta v enega in analiza ju obravnava kot en vzorec.
+> **The CSV is APPENDED TO, not overwritten.** Delete the old file before repeating the same
+> experiment, otherwise two runs merge into one and the analysis treats them as a single sample.
 
-Slike in tabela nastanejo v `../analiza/slike/` z `python3 ../analiza/analiza_posrednik.py`.
+The figures and the table are created in `../analysis/figures/` by
+`python3 ../analysis/facilitator_analysis.py`.

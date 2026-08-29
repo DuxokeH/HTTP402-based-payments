@@ -2,24 +2,24 @@
 
 /**
  * SQLite persistence — METERED PREPAID SESSION with credit + budget + validity
- * (folder 03_avtomatska_placila_dobroimetje).
+ * (folder 03_machine_payments_prepaid).
  *
  * Implements a
- *   "predplačniška merjena seja z omejenim dobroimetjem, proračunom in časom
- *    veljavnosti" (prepaid metered session with limited credit, budget and TTL).
+ *   "prepaid metered session with limited credit, budget and validity window"
+ *   (TTL).
  *
- * The original testna-okolja/00_demo credit tab keyed a balance to a payer ADDRESS with no
+ * The original test-environments/00_demo credit tab keyed a balance to a payer ADDRESS with no
  * budget cap and no expiry. Here every top-up opens an explicit SESSION:
  *
- *   deposit_wei   funded credit (dobroimetje)          — remaining = deposit-spent
- *   budget_wei    spend cap for the session (proračun) — spent may never exceed it
- *   expires_at    validity window (čas veljavnosti)    — debits rejected afterwards
+ *   deposit_wei   funded credit                — remaining = deposit-spent
+ *   budget_wei    spend cap for the session    — spent may never exceed it
+ *   expires_at    validity window (TTL)        — debits rejected afterwards
  *   spent_wei     running total of authorized debits
  *
  * All wei math is BigInt over TEXT columns. Top-up and debit run inside SQLite
  * transactions; the UNIQUE nonce column makes replayed debits fail atomically.
  *
- * Self-contained copy; original testna-okolja/00_demo/ files are left untouched.
+ * Self-contained copy; original test-environments/00_demo/ files are left untouched.
  */
 
 const Database = require('better-sqlite3');
@@ -29,7 +29,7 @@ const path = require('path');
 const DATA_DIR = path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const db = new Database(process.env.DB_PATH || path.join(DATA_DIR, 'iot_dobroimetje.db'));
+const db = new Database(process.env.DB_PATH || path.join(DATA_DIR, 'iot_credit.db'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
@@ -106,7 +106,7 @@ const openSession = db.transaction(({ sessionId, payerAddress, resource, deposit
 /**
  * Authorize one metered debit against a session.
  * Enforces, in order: nonce uniqueness, session exists/open, validity (TTL),
- * budget cap (proračun), and remaining credit (dobroimetje).
+ * budget cap, and remaining credit.
  * Returns { ok, balanceWei, budgetRemainingWei, spentWei } or { ok:false, reason, ... }.
  */
 const debit = db.transaction(({ sessionId, amountWei, nonce, requestPath, bytes }) => {

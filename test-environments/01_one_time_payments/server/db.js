@@ -1,15 +1,15 @@
 'use strict';
 
 /**
- * SQLite persistence layer — ONE-TIME payment flow (folder 01_enkratna_placila).
+ * SQLite persistence layer — ONE-TIME payment flow (folder 01_one_time_payments).
  *
- * Derived from the original testna-okolja/00_demo/server/db.js, trimmed to the one-time
+ * Derived from the original test-environments/00_demo/server/db.js, trimmed to the one-time
  * flow and extended with a `resource` column so that a proof token is bound to
  * the exact resource it paid for (unambiguous linking of
  * payment-request ↔ transaction ↔ proof ↔ requested resource).
  *
  * NOTE: this is a self-contained copy for the measurement harness. The original
- * project files under testna-okolja/00_demo/ are intentionally left untouched.
+ * project files under test-environments/00_demo/ are intentionally left untouched.
  */
 
 const Database = require('better-sqlite3');
@@ -19,7 +19,7 @@ const path = require('path');
 const DATA_DIR = path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, 'x402_enkratna.db');
+const DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, 'x402_one_time.db');
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');

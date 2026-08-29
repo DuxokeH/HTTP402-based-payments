@@ -28,7 +28,8 @@
  *      X-Chain-Read-Ms   time spent reading the tx from the chain (ms)
  *      X-Downstream-Ms   time spent in the downstream/external API (ms)
  *
- *  Code/comments: English. User-facing messages: Slovenian (on the wire).
+ *  Code/comments: English. The user-facing messages go on the wire — visible
+ *  in Wireshark.
  * ============================================================================
  */
 
@@ -49,8 +50,8 @@ let OpenAI = null;
 try { OpenAI = require('openai'); } catch { /* optional dependency */ }
 
 const db = require('./db');
-// Uradni x402 v2 — VZPOREDNI plačilni način (X402_MODE=off|self). Ob 'off' se
-// /x402/* poti ne priklopijo in mapa deluje bajt-enako kot doslej.
+// Official x402 v2 — PARALLEL payment mode (X402_MODE=off|self). With 'off' the
+// /x402/* routes are not mounted and the folder behaves byte-identically to before.
 const x402 = require('./x402');
 const dbx = x402.enabled ? require('./db_x402') : null;
 
@@ -265,7 +266,7 @@ app.get('/config', (req, res) => {
     mockVerify: MOCK_VERIFY,
     aiEnabled: !!openai,
     model: OPENAI_MODEL,
-    potek: 'zdruzen: 2 izmenjavi / 4 sporocila (GET->402, POST->200+vsebina+zeton)',
+    potek: 'merged: 2 exchanges / 4 messages (GET->402, POST->200+content+token)',
     x402: x402.enabled ? x402.summary() : null
   });
 });
@@ -283,7 +284,7 @@ app.get('/health', async (req, res) => {
   const status = dbOk && (rpcOk || MOCK_VERIFY) ? 'ok' : 'degraded';
   res.setHeader('X-Server-Ms', serverMs(req));
   res.status(status === 'ok' ? 200 : 503).json({
-    status, service: 'X402 združena enkratna plačila (merchant)', network: NETWORK,
+    status, service: 'X402 merged one-time payments (merchant)', network: NETWORK,
     merchant: MERCHANT_WALLET, db: dbOk ? 'ok' : 'down', rpc: rpcOk ? 'ok' : 'down',
     mockVerify: MOCK_VERIFY, lastBlock, aiEnabled: !!openai,
     x402: x402.enabled ? await x402.health() : { mode: 'off' }
@@ -315,7 +316,7 @@ app.get('/service', serviceLimiter, (req, res) => {
     res.setHeader('X-Server-Ms', serverMs(req));
     return res.status(402).json({
       error: 'Payment Required',
-      message: 'Za dostop do te storitve je potrebno plačilo.',
+      message: 'Payment is required to access this service.',
       payment: {
         requestId,
         resource: RESOURCE,
@@ -331,14 +332,14 @@ app.get('/service', serviceLimiter, (req, res) => {
 
   // Acknowledgment readout: the server confirms the payment was already made.
   const proof = db.getProof(proofToken);
-  if (!proof) { res.setHeader('X-Server-Ms', serverMs(req)); return res.status(403).json({ error: 'Neveljaven ali potekel dokazni žeton' }); }
+  if (!proof) { res.setHeader('X-Server-Ms', serverMs(req)); return res.status(403).json({ error: 'Invalid or expired proof token' }); }
   res.setHeader('X-Server-Ms', serverMs(req));
   res.json({
     success: true, authorized: true, proofToken,
     resource: proof.resource,
     expiresAt: new Date(proof.expires_at).toISOString(),
     consumed: !!proof.consumed_at,
-    message: 'Plačilo je bilo že opravljeno in preverjeno.',
+    message: 'The payment has already been made and verified.',
     payment: { verified: true, txHash: proof.tx_hash, blockNumber: proof.block_number }
   });
 });
@@ -363,8 +364,8 @@ async function runDownstream(req, res, { prompt, model, proof }) {
   // it removes the highly variable external-API time from the protocol numbers.
   if (!openai) {
     const t0 = performance.now();
-    const response = `Odgovor zaščitene storitve. Vaš poziv: "${prompt}". ` +
-      `(demo način — brez zunanjega klica; za pravi zunanji API nastavi OPENAI_API_KEY)`;
+    const response = `Protected service response. Your prompt: "${prompt}". ` +
+      `(demo mode — no external call; set OPENAI_API_KEY for a real external API)`;
     downstreamMs = performance.now() - t0;
     res.setHeader('X-Downstream-Ms', downstreamMs.toFixed(3));
     res.setHeader('X-Server-Ms', serverMs(req));
@@ -395,7 +396,7 @@ async function runDownstream(req, res, { prompt, model, proof }) {
     // The payment stays proven: the client keeps the proofToken as evidence.
     res.status(502).json({
       error: 'AI service error',
-      message: 'Plačilo je veljavno in preverjeno, a zunanji API je vrnil napako.',
+      message: 'The payment is valid and verified, but the external API returned an error.',
       proofToken: proof.proofToken
     });
   }
@@ -407,13 +408,13 @@ app.post('/service', verifyLimiter, async (req, res) => {
   // ── Fallback path: redeem an existing proof (folder 01 semantics) ──
   if (proofToken) {
     const proof = db.getProof(proofToken);
-    if (!proof) { res.setHeader('X-Server-Ms', serverMs(req)); return res.status(403).json({ error: 'Neveljaven ali potekel dokazni žeton' }); }
-    if (proof.consumed_at) { res.setHeader('X-Server-Ms', serverMs(req)); return res.status(403).json({ error: 'Dokazni žeton je že bil porabljen' }); }
+    if (!proof) { res.setHeader('X-Server-Ms', serverMs(req)); return res.status(403).json({ error: 'Invalid or expired proof token' }); }
+    if (proof.consumed_at) { res.setHeader('X-Server-Ms', serverMs(req)); return res.status(403).json({ error: 'Proof token has already been consumed' }); }
 
     // Resource binding: the proof may only unlock the resource it paid for.
     if (proof.resource !== req.path) {
       res.setHeader('X-Server-Ms', serverMs(req));
-      return res.status(403).json({ error: 'Dokazni žeton ne velja za ta vir', expected: proof.resource, got: req.path });
+      return res.status(403).json({ error: 'Proof token is not valid for this resource', expected: proof.resource, got: req.path });
     }
 
     const parsed = servicePostSchema.safeParse(req.body || {});
@@ -423,11 +424,11 @@ app.post('/service', verifyLimiter, async (req, res) => {
 
     if (openai) {
       const todaySpend = db.getTodayOpenAISpend();
-      if (todaySpend >= OPENAI_DAILY_USD_CAP) { res.setHeader('X-Server-Ms', serverMs(req)); return res.status(503).json({ error: 'Dnevni proračun AI dosežen', proofToken }); }
+      if (todaySpend >= OPENAI_DAILY_USD_CAP) { res.setHeader('X-Server-Ms', serverMs(req)); return res.status(503).json({ error: 'Daily AI budget reached', proofToken }); }
     }
 
     // One-shot: consume BEFORE the downstream call so a slow client cannot re-spend.
-    if (!db.consumeProof(proofToken)) { res.setHeader('X-Server-Ms', serverMs(req)); return res.status(409).json({ error: 'Dokazni žeton porabljen sočasno' }); }
+    if (!db.consumeProof(proofToken)) { res.setHeader('X-Server-Ms', serverMs(req)); return res.status(409).json({ error: 'Proof token consumed concurrently' }); }
 
     return runDownstream(req, res, { prompt, model, proof: { proofToken, txHash: proof.tx_hash, blockNumber: proof.block_number } });
   }
@@ -439,12 +440,12 @@ app.post('/service', verifyLimiter, async (req, res) => {
   const model = requestedModel && MODEL_PRICING[requestedModel] ? requestedModel : OPENAI_MODEL;
 
   const paymentRequest = db.getPaymentRequest(requestId);
-  if (!paymentRequest) { res.setHeader('X-Server-Ms', serverMs(req)); return res.status(400).json({ error: 'Neveljavna ali potekla plačilna zahteva' }); }
+  if (!paymentRequest) { res.setHeader('X-Server-Ms', serverMs(req)); return res.status(400).json({ error: 'Invalid or expired payment request' }); }
 
   if (db.isTxRedeemed(txHash)) {
     req.log.warn({ txHash }, 'Replay attempt: tx already redeemed');
     res.setHeader('X-Server-Ms', serverMs(req));
-    return res.status(400).json({ error: 'Transakcija je že bila unovčena' });
+    return res.status(400).json({ error: 'Transaction has already been redeemed' });
   }
 
   let chainReadMs = 0, verification;
@@ -461,20 +462,20 @@ app.post('/service', verifyLimiter, async (req, res) => {
     chainReadMs = performance.now() - t0;
     res.setHeader('X-Chain-Read-Ms', chainReadMs.toFixed(3));
   }
-  if (!verification.verified) { res.setHeader('X-Server-Ms', serverMs(req)); return res.status(400).json({ error: 'Preverjanje transakcije ni uspelo', message: verification.error }); }
+  if (!verification.verified) { res.setHeader('X-Server-Ms', serverMs(req)); return res.status(400).json({ error: 'Transaction verification failed', message: verification.error }); }
   const tx = verification.tx;
 
-  if (tx.status !== 1) { res.setHeader('X-Server-Ms', serverMs(req)); return res.status(400).json({ error: 'Transakcija na verigi ni uspela' }); }
+  if (tx.status !== 1) { res.setHeader('X-Server-Ms', serverMs(req)); return res.status(400).json({ error: 'On-chain transaction failed' }); }
 
   const expectedRecipient = paymentRequest.recipient || MERCHANT_WALLET;
-  if (tx.to?.toLowerCase() !== expectedRecipient.toLowerCase()) { res.setHeader('X-Server-Ms', serverMs(req)); return res.status(400).json({ error: 'Napačen prejemnik' }); }
-  if (tx.from.toLowerCase() !== payerAddress.toLowerCase()) { res.setHeader('X-Server-Ms', serverMs(req)); return res.status(400).json({ error: 'Neujemanje plačnika', message: 'Pošiljatelj transakcije se ne ujema z navedenim naslovom plačnika' }); }
-  if (paymentRequest.payer_address && paymentRequest.payer_address.toLowerCase() !== payerAddress.toLowerCase()) { res.setHeader('X-Server-Ms', serverMs(req)); return res.status(400).json({ error: 'Neujemanje plačnika z izvorno zahtevo' }); }
+  if (tx.to?.toLowerCase() !== expectedRecipient.toLowerCase()) { res.setHeader('X-Server-Ms', serverMs(req)); return res.status(400).json({ error: 'Wrong recipient' }); }
+  if (tx.from.toLowerCase() !== payerAddress.toLowerCase()) { res.setHeader('X-Server-Ms', serverMs(req)); return res.status(400).json({ error: 'Payer mismatch', message: 'Transaction sender does not match the stated payer address' }); }
+  if (paymentRequest.payer_address && paymentRequest.payer_address.toLowerCase() !== payerAddress.toLowerCase()) { res.setHeader('X-Server-Ms', serverMs(req)); return res.status(400).json({ error: 'Payer does not match the original request' }); }
 
   const expected = ethers.parseEther(paymentRequest.amount_eth);
   if (BigInt(tx.value) < expected) {
     res.setHeader('X-Server-Ms', serverMs(req));
-    return res.status(400).json({ error: 'Prenizek znesek', message: `Zahtevano ${paymentRequest.amount_eth} ETH, prejeto ${ethers.formatEther(tx.value)} ETH` });
+    return res.status(400).json({ error: 'Amount too low', message: `Required ${paymentRequest.amount_eth} ETH, received ${ethers.formatEther(tx.value)} ETH` });
   }
 
   const newProofToken = `proof_${uuidv4()}`;
@@ -485,7 +486,7 @@ app.post('/service', verifyLimiter, async (req, res) => {
       recipient: tx.to, amountEth: ethers.formatEther(tx.value), ttlSeconds: PROOF_TOKEN_TTL_SECONDS
     });
   } catch (err) {
-    if (err.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') { res.setHeader('X-Server-Ms', serverMs(req)); return res.status(400).json({ error: 'Transakcija je že bila unovčena' }); }
+    if (err.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') { res.setHeader('X-Server-Ms', serverMs(req)); return res.status(400).json({ error: 'Transaction has already been redeemed' }); }
     throw err;
   }
   req.log.info({ proofToken: newProofToken, txHash, blockNumber: tx.blockNumber }, 'Payment verified (merged exchange)');
@@ -497,34 +498,34 @@ app.post('/service', verifyLimiter, async (req, res) => {
     const todaySpend = db.getTodayOpenAISpend();
     if (todaySpend >= OPENAI_DAILY_USD_CAP) {
       res.setHeader('X-Server-Ms', serverMs(req));
-      return res.status(503).json({ error: 'Dnevni proračun AI dosežen', message: 'Plačilo je preverjeno — žeton unovči kasneje.', proofToken: newProofToken, expiresInSeconds: PROOF_TOKEN_TTL_SECONDS });
+      return res.status(503).json({ error: 'Daily AI budget reached', message: 'The payment is verified — redeem the token later.', proofToken: newProofToken, expiresInSeconds: PROOF_TOKEN_TTL_SECONDS });
     }
   }
 
   // One-shot: consume immediately (content is delivered in this same response).
-  if (!db.consumeProof(newProofToken)) { res.setHeader('X-Server-Ms', serverMs(req)); return res.status(409).json({ error: 'Dokazni žeton porabljen sočasno' }); }
+  if (!db.consumeProof(newProofToken)) { res.setHeader('X-Server-Ms', serverMs(req)); return res.status(409).json({ error: 'Proof token consumed concurrently' }); }
 
   return runDownstream(req, res, { prompt, model, proof: { proofToken: newProofToken, txHash: tx.hash, blockNumber: tx.blockNumber } });
 });
 
 // ─────────────────────────────────────────────────────────
-// x402 v2 (VZPOREDNI NAČIN) — GET /x402/service, GET /x402/config
+// x402 v2 (PARALLEL MODE) — GET /x402/service, GET /x402/config
 //
-// Uradni protokol: 402 + PAYMENT-REQUIRED → odjemalec podpiše EIP-3009
-// pooblastilo (ETH — testno) → ponovni GET s PAYMENT-SIGNATURE →
-// strežnik SAM preveri in poravna (samofacilitirano) → 200 + PAYMENT-RESPONSE.
-// Lastni protokol zgoraj (združeni /service) je nedotaknjen.
+// Official protocol: 402 + PAYMENT-REQUIRED → the client signs an EIP-3009
+// authorization (test ETH) → repeated GET with PAYMENT-SIGNATURE →
+// the server ITSELF verifies and settles (self-facilitated) → 200 + PAYMENT-RESPONSE.
+// The custom protocol above (the merged /service) is untouched.
 // ─────────────────────────────────────────────────────────
 
 if (x402.enabled) {
   const { middleware: x402Middleware, x402Route } = x402.buildMiddleware({
     dbx, logger,
     routes: {
-      'GET /x402/service': x402.routeConfig('Zaščitena storitev — x402 exact (Ethereum Sepolia, ETH — testno)')
+      'GET /x402/service': x402.routeConfig('Protected service — x402 exact (Ethereum Sepolia, test ETH)')
     }
   });
 
-  // javna konfiguracija za brskalnik/agente (brez skrivnosti)
+  // public configuration for browsers/agents (no secrets)
   app.get('/x402/config', (req, res) => {
     res.setHeader('X-Server-Ms', serverMs(req));
     res.json(x402.summary());
@@ -535,36 +536,36 @@ if (x402.enabled) {
   app.get('/x402/service', serviceLimiter, x402Route((req, res) => {
     const prompt = typeof req.query.prompt === 'string' ? req.query.prompt.slice(0, OPENAI_MAX_PROMPT_CHARS) : '';
     const pr = x402.readPaymentResponse(res.getHeader('PAYMENT-RESPONSE'));
-    // determinističen demo odgovor (kot POST /service brez OPENAI_API_KEY) —
-    // čista meritev plačilnih faz brez šuma zunanjega API-ja
-    const response = `Odgovor zaščitene storitve (x402). Vaš poziv: "${prompt}". ` +
-      `(demo način — plačano z x402 exact / ${x402.config.assetName} / Ethereum Sepolia (testno))`;
+    // deterministic demo response (like POST /service without OPENAI_API_KEY) —
+    // a clean measurement of the payment phases without external-API noise
+    const response = `Protected service response (x402). Your prompt: "${prompt}". ` +
+      `(demo mode — paid via x402 exact / ${x402.config.assetName} / Ethereum Sepolia (testnet))`;
     res.setHeader('X-Server-Ms', serverMs(req));
     res.json({
       success: true, response, model: 'demo',
       payment: {
-        protokol: 'x402-self', shema: 'exact',
-        omrezje: x402.config.network, sredstvo: x402.config.assetName,
-        txHash: pr ? pr.txHash : null, placnikGasa: 'streznik'
+        protocol: 'x402-self', scheme: 'exact',
+        network: x402.config.network, asset: x402.config.assetName,
+        txHash: pr ? pr.txHash : null, gasPayer: 'server'
       }
     });
   }));
 
-  // vpogled v stanje plačila (za meritve/uskladitev; payment_id je neugibljiv)
+  // payment state readout (for measurements/reconciliation; payment_id is unguessable)
   app.get('/x402/payment/:id', (req, res) => {
     const row = dbx.getPayment(String(req.params.id).slice(0, 160));
     res.setHeader('X-Server-Ms', serverMs(req));
-    if (!row) return res.status(404).json({ error: 'Neznano plačilo' });
+    if (!row) return res.status(404).json({ error: 'Unknown payment' });
     res.json({
       paymentId: row.payment_id, status: row.status, resource: row.resource,
       network: row.network, asset: row.asset, amountAtomic: row.amount_atomic,
       payer: row.payer, payTo: row.pay_to, txHash: row.tx_hash,
-      blok: row.block_number, gasEnote: row.gas_used, cenaGasWei: row.effective_gas_price,
+      block: row.block_number, gasUnits: row.gas_used, gasPriceWei: row.effective_gas_price,
       poskusi: row.attempt, ustvarjeno: row.created_at, posodobljeno: row.updated_at
     });
   });
 
-  logger.info({ x402: x402.summary() }, 'x402 v2 vzporedni način priklopljen (/x402/service)');
+  logger.info({ x402: x402.summary() }, 'x402 v2 parallel mode mounted (/x402/service)');
 }
 
 // ─────────────────────────────────────────────────────────
@@ -573,13 +574,13 @@ if (x402.enabled) {
 
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
-  // Napake razčlenjevalnika telesa (`express.json`) nosijo svoj status 400: pokvarjen
-  // JSON je napaka odjemalca in ne odpoved strežnika. Brez tega bi vsako skazano telo
-  // izgledalo kot 500 — pri varnostnem preizkusu lažno kot ranljivost, v dnevniku pa šum.
+  // Body-parser errors (`express.json`) carry their own 400 status: malformed
+  // JSON is a client error, not a server failure. Without this, every mangled body
+  // would look like a 500 — a false vulnerability in the security test, and noise in the log.
   const code = Number.isInteger(err.status) && err.status >= 400 && err.status < 500 ? err.status : 500;
   const log = req.log || logger;
   if (code === 500) log.error({ err: err.message }, 'Unhandled');
-  else log.warn({ err: err.message, code }, 'Slaba zahteva');
+  else log.warn({ err: err.message, code }, 'Bad request');
   if (!res.headersSent) res.status(code).json(code === 500 ? { error: 'Internal server error' } : { error: 'Bad request', message: err.message });
 });
 

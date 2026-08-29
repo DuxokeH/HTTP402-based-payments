@@ -1,7 +1,7 @@
 {
-  "name": "x402-spletisce-posrednik",
+  "name": "x402-website-facilitator",
   "version": "1.0.0",
-  "description": "X402 spletišče — POSREDNIŠKA veja (topologija b): trgovec brez dostopa do verige, vse plačilno stanje pri posredniku",
+  "description": "X402 spletišče — POSREDNIŠKA veja (topology b): merchant brez dostopa do verige, vse plačilno stanje pri posredniku",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {

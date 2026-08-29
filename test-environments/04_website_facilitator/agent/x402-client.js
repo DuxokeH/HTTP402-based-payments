@@ -1,21 +1,21 @@
 'use strict';
 
-// Node 18: globalni WebCrypto je brezpogojen šele od Node 19 (glej x402.js).
+// Node 18: the global WebCrypto is only unconditionally available from Node 19 on (see x402.js).
 if (!globalThis.crypto) globalThis.crypto = require('node:crypto').webcrypto;
 
 /**
- * x402 v2 — skupni ODJEMALSKI modul za merilne agente (uradni protokol).
- * Bajt-identična kopija v mapah 01/klient, 02/agent, 03/agent, 04/agent.
+ * x402 v2 — shared CLIENT module for the measurement agents (official protocol).
+ * Byte-identical copy in the folders 01/client, 02/agent, 03/agent, 04/agent.
  *
- * Meritveni tok je RAZSTAVLJEN na faze (kot obstoječi merilni klienti), zato
- * ne uporablja wrapFetchWithPayment, ampak korake vodi sam:
+ * The measurement flow is DECOMPOSED into phases (like the existing measurement
+ * clients), so it does not use wrapFetchWithPayment but drives the steps itself:
  *
- *   1. GET vir            → 402 + PAYMENT-REQUIRED     (t_402)
- *   2. podpis EIP-3009    → PaymentPayload             (t_podpis)
- *   3. ponovni GET + PAYMENT-SIGNATURE → 200 + PAYMENT-RESPONSE (t_poravnava_http)
+ *   1. GET resource       → 402 + PAYMENT-REQUIRED     (t_402)
+ *   2. EIP-3009 signature → PaymentPayload             (t_podpis)
+ *   3. repeat GET + PAYMENT-SIGNATURE → 200 + PAYMENT-RESPONSE (t_poravnava_http)
  *
- * Odjemalec podpiše POOBLASTILO; poravnalno transakcijo odda strežnik/
- * posrednik in ta plača gas. Odjemalec gasa NE plača.
+ * The client signs an AUTHORIZATION; the settlement transaction is submitted by
+ * the server/facilitator, which pays the gas. The client does NOT pay gas.
  */
 
 const { performance } = require('perf_hooks');
@@ -33,8 +33,8 @@ function requireSdk() {
 }
 
 /**
- * Plačnik: privateKey iz wallet.json (x402PayerPrivateKey) ali enkratna
- * denarnica za mock (brez sredstev — mock strežnik verige ne bere).
+ * Payer: privateKey from wallet.json (x402PayerPrivateKey) or a one-time
+ * wallet for mock mode (no funds — the mock server never reads the chain).
  */
 function makePayer({ privateKey } = {}) {
   const { privateKeyToAccount, generatePrivateKey } = requireSdk();
@@ -46,12 +46,12 @@ function makeClient(account) {
   const { x402Client, ExactEvmScheme, appendPaymentIdentifierToExtensions } = requireSdk();
   const client = new x402Client();
   client.register('eip155:*', new ExactEvmScheme(account));
-  // SDK-jev privzeti spendControls dovoli le sredstva iz njegovega registra;
-  // testni ETH na eip155:11155111 tam ni, zato bi createPaymentPayload sicer
-  // zavrnil VSE strežnikove zahteve ("rejected by spendControls").
+  // The SDK's default spendControls only allows assets from its registry;
+  // test ETH on eip155:11155111 is not in there, so createPaymentPayload would
+  // otherwise reject ALL of the server's requests ("rejected by spendControls").
   client.setSpendControls(false);
-  // En sam trajni hook (ne po klicu — hooki se ne dajo odjaviti): payment-id
-  // za tekoči podpis nosi lastnost __pid, ki jo nastavi payFlow.
+  // A single persistent hook (not per call — hooks cannot be unregistered): the
+  // payment-id for the current signature is carried by the __pid property, set by payFlow.
   client.__pid = null;
   client.onBeforePaymentCreation(async ({ paymentRequired }) => {
     if (client.__pid && paymentRequired.extensions) {
@@ -74,18 +74,18 @@ function readPaymentResponseHeader(res) {
 }
 
 /**
- * En x402 plačilni obhod z merjenjem faz.
+ * One x402 payment round trip with phase measurement.
  *
  * @param {object} o
- *   o.url          polni URL vira
- *   o.account      viem račun plačnika (makePayer)
- *   o.client       x402Client (makeClient) — lahko se deli med klici
- *   o.headers      dodatne glave (npr. Authorization: Bearer <ZETON>)
- *   o.paymentId    izrecni payment-identifier (privzeto nov generatePaymentId())
- *   o.method       privzeto GET
- *   o.fault        za teste: vrednost glave X-X402-Mock-Fault pri PLAČANI zahtevi
- *   o.reuseHeaders za teste: že podpisane glave prejšnjega kroga (predvajanje)
- * @returns meritve + odgovor + podpisane glave (za predvajanje v testih)
+ *   o.url          full URL of the resource
+ *   o.account      viem account of the payer (makePayer)
+ *   o.client       x402Client (makeClient) — may be shared across calls
+ *   o.headers      additional headers (e.g. Authorization: Bearer <TOKEN>)
+ *   o.paymentId    explicit payment-identifier (default: a fresh generatePaymentId())
+ *   o.method       default GET
+ *   o.fault        for tests: value of the X-X402-Mock-Fault header on the PAID request
+ *   o.reuseHeaders for tests: already-signed headers from a previous round (replay)
+ * @returns measurements + response + signed headers (for replay in tests)
  */
 async function payFlow(o) {
   const { x402HTTPClient, generatePaymentId, appendPaymentIdentifierToExtensions } = requireSdk();
@@ -94,7 +94,7 @@ async function payFlow(o) {
   const t = {};
   const paymentId = o.paymentId || generatePaymentId();
 
-  // 1) izziv
+  // 1) challenge
   const bodyInit = o.body != null ? { body: typeof o.body === 'string' ? o.body : JSON.stringify(o.body) } : {};
   if (o.body != null) headers['Content-Type'] = 'application/json';
   let t0 = performance.now();
@@ -105,11 +105,11 @@ async function payFlow(o) {
   }
   const prHeader = first.headers.get('PAYMENT-REQUIRED');
   const paymentRequired = prHeader ? decodeB64Json(prHeader) : await first.json().catch(() => null);
-  if (!paymentRequired) throw new Error('402 brez berljivega PAYMENT-REQUIRED');
+  if (!paymentRequired) throw new Error('402 without a readable PAYMENT-REQUIRED');
 
   let signedHeaders = o.reuseHeaders;
   if (!signedHeaders) {
-    // 2) podpis pooblastila (payment-identifier v razširitve PRED podpisom)
+    // 2) sign the authorization (payment-identifier goes into the extensions BEFORE signing)
     o.client.__pid = paymentId;
     t0 = performance.now();
     let payload;
@@ -121,7 +121,7 @@ async function payFlow(o) {
     t.tPodpis = performance.now() - t0;
     signedHeaders = httpClient.encodePaymentSignatureHeader(payload);
     if (o.mutateAuthorization) {
-      // za negativne teste: pokvari podpisano polje po podpisu
+      // for negative tests: corrupt a signed field after signing
       const raw = decodeB64Json(Object.values(signedHeaders)[0]);
       o.mutateAuthorization(raw.payload.authorization, raw);
       const b64 = Buffer.from(JSON.stringify(raw), 'utf8').toString('base64');
@@ -131,7 +131,7 @@ async function payFlow(o) {
     t.tPodpis = 0;
   }
 
-  // 3) plačana zahteva
+  // 3) paid request
   const paidHeaders = { ...headers, ...signedHeaders, 'Access-Control-Expose-Headers': 'PAYMENT-RESPONSE,X-PAYMENT-RESPONSE' };
   if (o.fault) paidHeaders['X-X402-Mock-Fault'] = o.fault;
   t0 = performance.now();
@@ -147,7 +147,7 @@ async function payFlow(o) {
   return {
     ok: res.ok, status: res.status, res, t, paymentId, signedHeaders,
     paymentResponse, serverMs, settleMs, verifyMs, replayed,
-    sinteticni: !!(paymentResponse && paymentResponse.txHash &&
+    synthetic: !!(paymentResponse && paymentResponse.txHash &&
       paymentResponse.txHash.startsWith('0x6d6f636b6d6f636b'))
   };
 }

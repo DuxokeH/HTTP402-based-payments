@@ -2,13 +2,13 @@
 
 /**
  * SQLite persistence — IoT provider, ONE on-chain transaction PER reading
- * (folder 02_avtomatska_placila_transakcije).
+ * (folder 02_machine_payments_per_request).
  *
  * This is the "naive M2M baseline": every sensor reading is unlocked by its own
  * Sepolia transaction. It exists to be COMPARED against the metered/prepaid
  * approach in folder 03 (cumulative gas cost for N uses).
  *
- * Self-contained copy; original testna-okolja/00_demo/ files are left untouched.
+ * Self-contained copy; original test-environments/00_demo/ files are left untouched.
  */
 
 const Database = require('better-sqlite3');
@@ -18,7 +18,7 @@ const path = require('path');
 const DATA_DIR = path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const db = new Database(process.env.DB_PATH || path.join(DATA_DIR, 'iot_transakcije.db'));
+const db = new Database(process.env.DB_PATH || path.join(DATA_DIR, 'iot_transactions.db'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 

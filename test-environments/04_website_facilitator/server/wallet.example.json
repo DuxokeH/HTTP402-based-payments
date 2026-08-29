@@ -1,8 +1,8 @@
 {
-  "_opomba": "Spletišče potrebuje naslov PREJEMNIKA (address) — kamor gredo plačila (tvoja testna denarnica prejemnika oz. naslov IoT naprave). Za PRAVA M2M plačila (zavihka 2 in 3 v real načinu) dodaj še payerPrivateKey financirane denarnice, ki v imenu stroja plačuje. V MOCK načinu payerPrivateKey ni potreben. NIKOLI ne deli privatnega ključa in ga ne nalagaj v git.",
+  "_note": "The website needs the RECEIVER address (address) — where payments go (your receiving test wallet, or the IoT device address if you reuse it). payerPrivateKey is only for the BUILT-IN M2M agent (/run/* paths) in real mode.",
   "address": "0x0000000000000000000000000000000000000000",
   "payerPrivateKey": "",
-  "_opomba_topologija": "Posredniška veja: ta naslov trgovec zapiše v plačilno zahtevo, ki jo odpre pri posredniku, in posrednik proti NJEMU preverja prejemnika transakcije (in ne proti eni globalni denarnici). Posrednik sam denarnice nima — ne pošilja in ne prejema sredstev.",
-  "_opomba_x402": "x402 v2 (vzporedni način, testna ETH konfiguracija — poravnava sintetična/mock): trgovec NE poseduje poravnalnega ključa — poravnava pripada posredniku. x402Address je neobvezni prejemnik (payTo).",
+  "_note_topology": "Facilitator branch: the merchant writes this address into the payment request it opens with the facilitator, and the facilitator verifies payments AGAINST IT. The merchant itself never reads the chain.",
+  "_note_x402": "x402 v2 (parallel mode, test ETH configuration): x402SettlerPrivateKey is the server's/facilitator's SETTLEMENT key for the official x402 protocol run (settlement is synthetic in mock); x402Address is the receiving address. Not needed in mock mode.",
   "x402Address": ""
 }

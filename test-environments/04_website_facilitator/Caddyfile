@@ -1,56 +1,56 @@
 # ─────────────────────────────────────────────────────────────────────────────
-#  Caddy (reverse-proxy s TLS) za mapo 04_spletisce_posrednik — POSREDNIŠKA VEJA
-#  docs/IDENTITETA.md §2, izboljšava A
+#  Caddy (reverse proxy with TLS) for the 04_website_facilitator folder — FACILITATOR BRANCH
+#  docs/IDENTITY.md §2, improvement A
 #
-#  Posebnost te veje: PLAČNIK se pogovarja z DVEMA storitvama —
-#    /            → trgovec  (402 izziv, dostop do vira)
-#    /posrednik/* → posrednik (POST /submit-payment; puščica C→F posredniškega toka)
+#  What is special about this branch: the PAYER talks to TWO services —
+#    /            → merchant  (402 challenge, access to the resource)
+#    /facilitator/* → facilitator (POST /submit-payment; arrow C→F of the facilitator flow)
 #
-#  Zato je posrednik tu izpostavljen pod predpono `/posrednik`. V streznik/.env
-#  ustrezno nastavi:
-#      POSREDNIK_PUBLIC_URL=https://tvoja-domena.si/posrednik
-#      POSREDNIK_URL=http://posrednik:4000
-#  Trgovec ta naslov zapiše v odgovor 402 in brskalnik ga uporabi neposredno.
+#  That is why the facilitator is exposed here under the `/facilitator` prefix.
+#  Set server/.env accordingly:
+#      FACILITATOR_PUBLIC_URL=https://your-domain.example/facilitator
+#      FACILITATOR_URL=http://facilitator:4000
+#  The merchant writes this address into the 402 response and the browser uses it directly.
 #
-#  Uporaba:
-#    1) `tvoja-domena.si` spodaj zamenjaj s pravo domeno, ki kaže na ta strežnik.
-#    2) Odpri vrata 80 in 443 (Caddy si sam pridobi Let's Encrypt certifikat).
-#    3) `docker compose up -d` v tej mapi.
+#  Usage:
+#    1) Replace `your-domain.example` below with a real domain pointing at this server.
+#    2) Open ports 80 and 443 (Caddy obtains a Let's Encrypt certificate on its own).
+#    3) `docker compose up -d` in this folder.
 #
-#  POZOR (Wireshark): pod TLS vsebina ni vidna. Za slikovna dokazila poteka
-#  odkomentiraj `ports` v docker-compose.yml in zajemi HTTP na vratih 8081
-#  (odjemalec↔trgovec) IN 4000 (odjemalec↔posrednik). Šele oboje skupaj pokaže
-#  vseh 5 izmenjav posredniškega toka. Glej ../README.md.
-#  HSTS spodaj brskalniku pove, naj na TO domeno leto dni ne dostopa po http://,
-#  zato zajem delaj po naslovu IP:8081 in IP:4000, ne po domeni.
+#  WARNING (Wireshark): under TLS the content is not visible. For screenshot proof
+#  of the flow, uncomment `ports` in docker-compose.yml and capture HTTP on port 8081
+#  (client↔merchant) AND 4000 (client↔facilitator). Only both together show
+#  all 5 exchanges of the facilitator flow. See ../README.md.
+#  HSTS below tells the browser not to access THIS domain over http:// for a year,
+#  so do the capture via IP:8081 and IP:4000, not via the domain.
 #
-#  ⚠ POZOR (denar): poti /run/tx in /run/merjeno sprožita vgrajenega M2M agenta.
-#  V PRAVEM načinu porabljata pravo denarnico. Aplikacija ju zapira s skrbniško
-#  prijavo (glej ../README.md). Za javno demo pusti MOCK_VERIFY=true.
+#  ⚠ WARNING (money): the /run/tx and /run/metered paths trigger the built-in M2M agent.
+#  In REAL mode they spend a real wallet. The application locks them behind the
+#  admin login (see ../README.md). For a public demo leave MOCK_VERIFY=true.
 # ─────────────────────────────────────────────────────────────────────────────
 
-tvoja-domena.si {
+your-domain.example {
     encode zstd gzip
 
-    # ── Posrednik pod predpono /posrednik ────────────────────────────────────
-    # `handle_path` predpono odstrani, zato posrednik vidi /submit-payment in ne
-    # /posrednik/submit-payment — njegove poti ostanejo nespremenjene.
-    handle_path /posrednik/* {
-        reverse_proxy posrednik:4000
+    # ── Facilitator under the /facilitator prefix ────────────────────────────
+    # `handle_path` strips the prefix, so the facilitator sees /submit-payment and
+    # not /facilitator/submit-payment — its paths stay unchanged.
+    handle_path /facilitator/* {
+        reverse_proxy facilitator:4000
     }
 
-    # ── Vse ostalo trgovcu ───────────────────────────────────────────────────
+    # ── Everything else goes to the merchant ─────────────────────────────────
     handle {
-        # Zaščita zaganjalnika M2M agenta pred javnostjo (glej opozorilo zgoraj).
-        # Geslo ustvariš z:  docker run --rm caddy:2-alpine caddy hash-password --plaintext 'tvoje-geslo'
+        # Shields the M2M agent runner from the public (see the warning above).
+        # Create the password with:  docker run --rm caddy:2-alpine caddy hash-password --plaintext 'your-password'
         #
-        # @zaganjalnik path /run/*
-        # basic_auth @zaganjalnik {
-        #     demo <sem-prilepi-hash>
+        # @runner path /run/*
+        # basic_auth @runner {
+        #     demo <paste-hash-here>
         # }
 
-        reverse_proxy trgovec:8081 {
-            # Server-Sent Events (/run/tx, /run/merjeno) ne smejo biti medpomnjeni.
+        reverse_proxy merchant:8081 {
+            # Server-Sent Events (/run/tx, /run/metered) must not be buffered.
             flush_interval -1
         }
     }
@@ -69,15 +69,15 @@ tvoja-domena.si {
     }
 }
 
-# Neobvezno: lokalno preizkušanje TLS (Caddy izda samopodpisan certifikat,
-# brskalnik bo opozoril — za razvoj je to v redu).
+# Optional: local TLS testing (Caddy issues a self-signed certificate;
+# the browser will warn — that is fine for development).
 #
 # localhost {
-#     handle_path /posrednik/* {
-#         reverse_proxy posrednik:4000
+#     handle_path /facilitator/* {
+#         reverse_proxy facilitator:4000
 #     }
 #     handle {
-#         reverse_proxy trgovec:8081 {
+#         reverse_proxy merchant:8081 {
 #             flush_interval -1
 #         }
 #     }

@@ -1,33 +1,33 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Analiza AVTOMATSKIH plačil z 1 transakcijo/poizvedbo (mapa 02).
+Analysis of MACHINE payments with 1 transaction per query (folder 02).
 
-Nariše:
-  - kumulativni strošek provizij (gas) v odvisnosti od števila poizvedb N
-    (strmo naraščajoča premica — vsaka poizvedba je nova transakcija),
-  - latenco posamezne poizvedbe po zaporedju.
+Plots:
+  - cumulative fee cost (gas) as a function of the number of queries N
+    (a steeply rising straight line — every query is a new transaction),
+  - the latency of each individual query in sequence order.
 
-Če CSV nima pravih vrednosti gasa (npr. mock), strošek MODELIRA z domnevno
-ceno gasa (--gas-price-gwei) in to jasno označi kot »modelirano«.
+If the CSV has no real gas values (e.g. mock), the cost is MODELLED with an
+assumed gas price (--gas-price-gwei) and clearly labelled as "modelled".
 
-Uporaba:
-  python3 analiza_transakcije.py
-  python3 analiza_transakcije.py ../meritve/transakcije_real.csv --gas-price-gwei 2
+Usage:
+  python3 transaction_analysis.py
+  python3 transaction_analysis.py ../measurements/transactions_real.csv --gas-price-gwei 2
 """
 import os, sys, argparse
 import numpy as np
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from slog import nastavi_slog, ocisti_osi, shrani, oznaci_vzorec, ORANZNA, MODRA, INK2, MUTED
+from style import set_style, clean_axes, save, mark_sample, t, add_lang_flag, set_language, ORANGE, BLUE, INK2, MUTED
 import matplotlib.pyplot as plt
 
 GWEI = 1_000_000_000
 
-def poisci_csv():
-    d = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "meritve")
-    for name in ("transakcije_real.csv", "transakcije_mock.csv", "_vzorec/transakcije_real.csv", "_vzorec/transakcije_mock.csv"):
+def find_csv():
+    d = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "measurements")
+    for name in ("transactions_real.csv", "transactions_mock.csv", "_sample/transactions_real.csv", "_sample/transactions_mock.csv"):
         p = os.path.join(d, name)
         if os.path.exists(p):
             return p
@@ -36,66 +36,68 @@ def poisci_csv():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("csv", nargs="?", default=None)
-    ap.add_argument("--out", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "slike"))
-    ap.add_argument("--gas-price-gwei", type=float, default=2.0, help="domnevna cena gasa za MODEL, če CSV nima gasa")
+    ap.add_argument("--out", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "figures"))
+    ap.add_argument("--gas-price-gwei", type=float, default=2.0, help="assumed gas price for the MODEL when the CSV has no gas values")
     ap.add_argument("--gas-per-tx", type=int, default=21000)
-    ap.add_argument("--vzorec", action="store_true", help="dodaj vodni žig 'SIMULIRANI PRIMER'")
+    ap.add_argument("--sample", action="store_true", help="add the 'SIMULATED EXAMPLE' watermark")
+    add_lang_flag(ap)
     args = ap.parse_args()
-    csv_path = args.csv or poisci_csv()
+    set_language("sl" if args.sl else "en")
+    csv_path = args.csv or find_csv()
     if not csv_path or not os.path.exists(csv_path):
-        print("Ni CSV. Najprej poženi meritev:  cd ../agent && npm run mock"); sys.exit(1)
+        print("No CSV found. Run a measurement first:  cd ../agent && npm run mock"); sys.exit(1)
 
     df = pd.read_csv(csv_path)
-    nacin = str(df["nacin"].iloc[0]) if "nacin" in df and len(df) else "?"
-    df["poizvedba"] = pd.to_numeric(df["poizvedba"], errors="coerce")
-    df = df.sort_values("poizvedba")
-    df["provizija_eth"] = pd.to_numeric(df.get("provizija_eth"), errors="coerce")
-    df["t_skupaj_ms"] = pd.to_numeric(df.get("t_skupaj_ms"), errors="coerce")
-    nastavi_slog()
-    if args.vzorec or "_vzorec" in str(csv_path):
-        oznaci_vzorec(True)
-    print(f"Vir: {csv_path}  ·  način={nacin}  ·  n={len(df)}")
+    mode = str(df["mode"].iloc[0]) if "mode" in df and len(df) else "?"
+    df["query"] = pd.to_numeric(df["query"], errors="coerce")
+    df = df.sort_values("query")
+    df["fee_eth"] = pd.to_numeric(df.get("fee_eth"), errors="coerce")
+    df["t_total_ms"] = pd.to_numeric(df.get("t_total_ms"), errors="coerce")
+    set_style()
+    if args.sample or "_sample" in str(csv_path):
+        mark_sample(True)
+    print(f"Source: {csv_path}  ·  mode={mode}  ·  n={len(df)}")
 
-    N = df["poizvedba"].astype(int).values
-    modelirano = df["provizija_eth"].notna().sum() == 0
+    N = df["query"].astype(int).values
+    modelirano = df["fee_eth"].notna().sum() == 0
     if modelirano:
         fee = args.gas_per_tx * args.gas_price_gwei / 1e9   # ETH/tx
         cum = np.cumsum(np.full(len(df), fee))
-        oznaka = f"modelirano @ {args.gas_price_gwei:g} gwei"
+        oznaka = t(f"modelled @ {args.gas_price_gwei:g} gwei", f"modelirano @ {args.gas_price_gwei:g} gwei")
     else:
-        fee = float(df["provizija_eth"].dropna().mean())
-        cum = df["provizija_eth"].fillna(fee).cumsum().values
-        oznaka = "izmerjeno"
+        fee = float(df["fee_eth"].dropna().mean())
+        cum = df["fee_eth"].fillna(fee).cumsum().values
+        oznaka = t("measured", "izmerjeno")
 
-    # ── Slika 1: kumulativni strošek poravnave ───────────────────────────────
+    # ── Figure 1: cumulative settlement cost ─────────────────────────────────
     fig, ax = plt.subplots(figsize=(8, 4.6))
-    ax.step(N, cum, where="post", color=ORANZNA, linewidth=2.2, label=f"1 transakcija / poizvedbo ({oznaka})")
-    ax.scatter(N, cum, color=ORANZNA, s=18, zorder=3)
-    ax.set_xlabel("število poizvedb N"); ax.set_ylabel("kumulativni strošek poravnave [ETH]")
-    ax.set_title("Avtomatska plačila: kumulativni strošek gasa narašča linearno z N")
-    ax.annotate(f"{len(N)} poizvedb = {len(N)} transakcij\n≈ {cum[-1]:.6f} ETH",
+    ax.step(N, cum, where="post", color=ORANGE, linewidth=2.2, label=t(f"1 transaction / query ({oznaka})", f"1 transakcija / poizvedbo ({oznaka})"))
+    ax.scatter(N, cum, color=ORANGE, s=18, zorder=3)
+    ax.set_xlabel(t("number of queries N", "število poizvedb N")); ax.set_ylabel(t("cumulative settlement cost [ETH]", "kumulativni strošek poravnave [ETH]"))
+    ax.set_title(t("Machine payments: cumulative gas cost grows linearly with N", "Avtomatska plačila: kumulativni strošek gasa narašča linearno z N"))
+    ax.annotate(t(f"{len(N)} queries = {len(N)} transactions\n≈ {cum[-1]:.6f} ETH", f"{len(N)} poizvedb = {len(N)} transakcij\n≈ {cum[-1]:.6f} ETH"),
                 xy=(N[-1], cum[-1]), xytext=(-10, -30), textcoords="offset points",
                 ha="right", color=INK2, fontsize=9,
                 arrowprops=dict(arrowstyle="->", color=MUTED))
     ax.legend(loc="upper left")
-    ocisti_osi(ax)
+    clean_axes(ax)
     if modelirano:
-        ax.text(0.99, 0.02, "strošek MODELIRAN (CSV brez pravega gasa)", transform=ax.transAxes,
+        ax.text(0.99, 0.02, t("cost MODELLED (CSV has no real gas values)", "strošek MODELIRAN (CSV brez pravega gasa)"), transform=ax.transAxes,
                 ha="right", va="bottom", fontsize=8, color=MUTED, style="italic")
-    shrani(fig, os.path.join(args.out, "01_kumulativni_gas.png"))
+    save(fig, os.path.join(args.out, "01_cumulative_gas.png"))
 
-    # ── Slika 2: latenca posamezne poizvedbe ─────────────────────────────────
+    # ── Figure 2: latency of individual queries ─────────────────────────────
     fig, ax = plt.subplots(figsize=(8, 4.2))
-    ax.plot(N, df["t_skupaj_ms"].values, color=MODRA, linewidth=1.8, marker="o", markersize=4, label="t_skupaj")
-    med = float(df["t_skupaj_ms"].median())
-    ax.axhline(med, color=MUTED, linestyle="--", linewidth=1, label=f"mediana ≈ {med:.0f} ms")
-    ax.set_xlabel("zaporedna poizvedba"); ax.set_ylabel("čas poizvedbe [ms]")
-    ax.set_title(f"Latenca posamezne poizvedbe (način {nacin})")
-    ax.legend(); ocisti_osi(ax)
-    shrani(fig, os.path.join(args.out, "02_latenca_poizvedb.png"))
+    ax.plot(N, df["t_total_ms"].values, color=BLUE, linewidth=1.8, marker="o", markersize=4, label=t("t_total", "t_skupaj"))
+    med = float(df["t_total_ms"].median())
+    ax.axhline(med, color=MUTED, linestyle="--", linewidth=1, label=t(f"median ≈ {med:.0f} ms", f"mediana ≈ {med:.0f} ms"))
+    ax.set_xlabel(t("query number in sequence", "zaporedna poizvedba")); ax.set_ylabel(t("query time [ms]", "čas poizvedbe [ms]"))
+    ax.set_title(t(f"Latency of individual queries (mode {mode})", f"Latenca posamezne poizvedbe (način {mode})"))
+    ax.legend(); clean_axes(ax)
+    save(fig, os.path.join(args.out, "02_query_latency.png"))
 
-    print(f"  Skupaj transakcij: {len(df)} · kumulativni strošek ≈ {cum[-1]:.8f} ETH ({oznaka})")
-    print("Končano.")
+    print(f"  Total transactions: {len(df)} · cumulative cost ≈ {cum[-1]:.8f} ETH ({oznaka})")
+    print("Done.")
 
 if __name__ == "__main__":
     main()

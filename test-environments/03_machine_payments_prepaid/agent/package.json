@@ -1,5 +1,5 @@
 {
-  "name": "x402-iot-agent-dobroimetje",
+  "name": "x402-iot-agent-prepaid",
   "version": "1.0.0",
   "description": "Consumer agent: one top-up opens a session, then N EIP-191 signed debits",
   "type": "commonjs",

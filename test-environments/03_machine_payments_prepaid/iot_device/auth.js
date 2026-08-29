@@ -2,31 +2,32 @@
 
 /**
  * ============================================================================
- *  SKRBNIŠKA PRIJAVA (admin login)
- *  Deljen modul — enaka koda je v mapah 02, 03 in 04.
+ *  ADMIN LOGIN
+ *  Shared module — the same code lives in folders 02, 03 and 04.
  * ============================================================================
  *
- *  Zakaj: strežnik je javno dosegljiv, poti kot /run/* pa v pravem načinu
- *  porabljajo pravo denarnico. Brez prijave lahko kdorkoli sproži plačila.
+ *  Why: the server is publicly reachable, and in real mode routes such as
+ *  /run/* spend a real wallet. Without a login anyone could trigger payments.
  *
- *  Kako pride skrbnik do gesla: poverilnice se ob PRVEM zagonu same ustvarijo
- *  in zapišejo v `data/admin-credentials.txt` (pravice 0600, samo lastnik).
- *  Skrbnik se prijavi po SSH na strežnik in jih prebere:
+ *  How the admin obtains the password: credentials are generated automatically
+ *  on the FIRST start and written to `data/admin-credentials.txt` (mode 0600,
+ *  owner only). The admin logs in to the server over SSH and reads them:
  *
- *      grep GESLO   data/admin-credentials.txt
- *      grep ZETON   data/admin-credentials.txt
+ *      grep PASSWORD data/admin-credentials.txt
+ *      grep TOKEN    data/admin-credentials.txt
  *
- *  Dve poti avtentikacije:
- *    • človek  → prijavna stran /prijava, nato piškotek `admin_sid` (HttpOnly),
- *    • stroj   → glava `Authorization: Bearer <ZETON>` (merilni agenti).
+ *  Two authentication paths:
+ *    • human   → login page /login, then the `admin_sid` cookie (HttpOnly),
+ *    • machine → `Authorization: Bearer <TOKEN>` header (measurement agents).
  *
- *  Piškotek je „ambientalna" poverilnica, zato ga brskalnik pošlje tudi pri
- *  krmarjenju z tuje strani (SameSite=Lax velja za GET navigacije). Poti, ki
- *  kaj spremenijo ali porabijo denar, zato dodatno varuje `requireCsrf`.
+ *  The cookie is an "ambient" credential, so the browser also sends it when
+ *  navigating from a foreign site (SameSite=Lax applies to GET navigations).
+ *  Routes that change anything or spend money are therefore additionally
+ *  guarded by `requireCsrf`.
  *
- *  Načelo ostaja isto kot v docs/IDENTITETA.md: identiteta se NE veže na IP.
- *  Prijava potuje z odjemalcem (piškotek/glava), zato menjava omrežja
- *  (wifi ↔ mobilni internet, NAT) prijavljenega uporabnika ne odjavi.
+ *  The principle stays the same as in docs/IDENTITY.md: identity is NOT tied
+ *  to an IP address. The login travels with the client (cookie/header), so
+ *  switching networks (wifi ↔ mobile data, NAT) does not log the user out.
  * ============================================================================
  */
 
@@ -38,14 +39,14 @@ const express = require('express');
 const SESSION_COOKIE = 'admin_sid';
 const SESSION_TTL = parseInt(process.env.ADMIN_SESSION_TTL_SECONDS || '28800', 10);   // 8 h
 const COOKIE_SECURE = process.env.COOKIE_SECURE === 'true';
-const MAX_LOGINS_IN_FLIGHT = 4;          // omeji hkratna draga preverjanja gesla
-const FAIL_DELAY_MS = 250;               // konstantna zakasnitev ob neuspehu
+const MAX_LOGINS_IN_FLIGHT = 4;          // limit concurrent expensive password checks
+const FAIL_DELAY_MS = 250;               // constant delay on failure
 
 const b64url = (buf) => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const rand = (bytes) => b64url(crypto.randomBytes(bytes));
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-// Časovno konstantna primerjava — brez uhajanja informacije prek trajanja.
+// Constant-time comparison — no information leak through timing.
 function safeEqual(a, b) {
   const A = Buffer.from(String(a ?? ''), 'utf8');
   const B = Buffer.from(String(b ?? ''), 'utf8');
@@ -53,9 +54,9 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(A, B);
 }
 
-// Geslo hranimo samo kot scrypt izvleček.
-// Sinhrona različica se uporablja SAMO ob zagonu; med delovanjem vedno asinhrona,
-// da drago računanje ne ustavi dogodkovne zanke (in s tem merilnih zahtev).
+// The password is stored only as an scrypt digest.
+// The synchronous variant is used ONLY at startup; at runtime always the async one,
+// so the expensive computation does not stall the event loop (and with it the measurement requests).
 const hashSync = (password, salt) => b64url(crypto.scryptSync(String(password), String(salt), 32));
 const hashAsync = (password, salt) => new Promise((resolve, reject) =>
   crypto.scrypt(String(password), String(salt), 32, (err, key) => err ? reject(err) : resolve(b64url(key))));
@@ -67,23 +68,23 @@ function readCookie(header, name) {
     if (i < 0) continue;
     if (part.slice(0, i).trim() !== name) continue;
     const raw = part.slice(i + 1).trim();
-    // Pokvarjeno ubežno zaporedje (npr. `%`) sicer vrže URIError in bi celotno
-    // odločitev o prijavi spremenilo v 500 — vrni surovo vrednost, ki se preprosto ne ujema.
+    // A malformed escape sequence (e.g. `%`) would otherwise throw a URIError and
+    // turn the whole login decision into a 500 — return the raw value, which simply won't match.
     try { return decodeURIComponent(raw); } catch { return raw; }
   }
   return null;
 }
 
 /**
- * Naloži ali ob prvem zagonu ustvari poverilnice.
+ * Load the credentials, or create them on first start.
  *
- * Pravila (namenoma preprosta in predvidljiva):
- *  - `ADMIN_PASSWORD` iz okolja VEDNO prevlada in se nikoli ne zapiše na disk.
- *  - `ADMIN_TOKEN` iz okolja VEDNO prevlada (neodvisno od gesla).
- *  - Karkoli ni podano iz okolja, se enkrat ustvari in shrani v `admin.json`.
- *  - `admin-credentials.txt` se osveži ob VSAKEM zagonu in vedno vsebuje
- *    veljaven ZETON, ker ga dokumentacija povsod išče z `grep`.
- *  - Odprto geslo gre samo v to datoteko (0600) — nikoli v dnevnik.
+ * Rules (deliberately simple and predictable):
+ *  - `ADMIN_PASSWORD` from the environment ALWAYS wins and is never written to disk.
+ *  - `ADMIN_TOKEN` from the environment ALWAYS wins (independently of the password).
+ *  - Anything not supplied via the environment is generated once and saved to `admin.json`.
+ *  - `admin-credentials.txt` is refreshed on EVERY start and always contains a
+ *    valid TOKEN, because the documentation looks it up everywhere with `grep`.
+ *  - The plaintext password goes only into that file (0600) — never into the log.
  */
 function loadOrCreate({ dataDir, appName, logger }) {
   fs.mkdirSync(dataDir, { recursive: true });
@@ -99,11 +100,11 @@ function loadOrCreate({ dataDir, appName, logger }) {
     try {
       const s = JSON.parse(fs.readFileSync(storePath, 'utf8'));
       if (s && s.username && s.salt && s.hash && s.token) stored = s;
-      else logger.warn({ storePath }, 'admin.json je pomanjkljiv — ustvarjam nove poverilnice');
-    } catch (e) { logger.warn({ err: e.message }, 'admin.json ni berljiv — ustvarjam nove poverilnice'); }
+      else logger.warn({ storePath }, 'admin.json is incomplete — creating new credentials');
+    } catch (e) { logger.warn({ err: e.message }, 'admin.json is unreadable — creating new credentials'); }
   }
 
-  // Geslo
+  // Password
   let username, salt, hash, generatedPassword = null;
   if (envPass) {
     username = envUser || (stored && stored.username) || 'admin';
@@ -113,15 +114,15 @@ function loadOrCreate({ dataDir, appName, logger }) {
     username = envUser || stored.username; salt = stored.salt; hash = stored.hash;
   } else {
     username = envUser || 'admin';
-    generatedPassword = rand(15);            // 20 znakov, ~120 bitov entropije
+    generatedPassword = rand(15);            // 20 characters, ~120 bits of entropy
     salt = rand(16);
     hash = hashSync(generatedPassword, salt);
   }
 
-  // Žeton: okolje > shranjeno > novo
+  // Token: environment > stored > new
   const token = envToken || (stored && !envToken ? stored.token : null) || rand(24);
 
-  // V admin.json shrani samo tisto, kar NE prihaja iz okolja.
+  // Save to admin.json only what does NOT come from the environment.
   if (!envPass || !envToken) {
     const toStore = {
       username: envPass ? (stored ? stored.username : username) : username,
@@ -130,38 +131,38 @@ function loadOrCreate({ dataDir, appName, logger }) {
       token: envToken ? (stored ? stored.token : token) : token,
       createdAt: (stored && stored.createdAt) || new Date().toISOString()
     };
-    // Če geslo prihaja iz okolja in shranjenega ni, nimamo česa smiselno shraniti razen žetona.
+    // If the password comes from the environment and nothing is stored, there is nothing meaningful to save except the token.
     if (envPass && !stored) { toStore.username = username; toStore.salt = salt; toStore.hash = ''; }
     try { fs.writeFileSync(storePath, JSON.stringify(toStore, null, 2), { mode: 0o600 }); fs.chmodSync(storePath, 0o600); }
-    catch (e) { logger.warn({ err: e.message }, 'admin.json ni bilo mogoče zapisati'); }
+    catch (e) { logger.warn({ err: e.message }, 'could not write admin.json'); }
   }
 
-  // Berljiva datoteka za `grep` — osveži jo ob vsakem zagonu.
-  const geslo = generatedPassword !== null ? generatedPassword
-    : (envPass ? '(iz okoljske spremenljivke ADMIN_PASSWORD)' : '(nespremenjeno — glej prejšnji zapis ali izbriši admin.json za novo)');
+  // Human-readable file for `grep` — refresh it on every start.
+  const password = generatedPassword !== null ? generatedPassword
+    : (envPass ? '(from the ADMIN_PASSWORD environment variable)' : '(unchanged — see the previous entry, or delete admin.json for a new one)');
   try {
     fs.writeFileSync(plainPath,
-      `# ${appName} — skrbniške poverilnice\n` +
-      `# Osveženo: ${new Date().toISOString()}\n` +
-      `# Datoteka je berljiva samo lastniku (0600). Geslo shrani na varno.\n` +
-      `# Novo geslo dobiš tako, da izbrišeš admin.json in znova zaženeš strežnik.\n` +
+      `# ${appName} — admin credentials\n` +
+      `# Refreshed: ${new Date().toISOString()}\n` +
+      `# This file is readable by the owner only (0600). Store the password somewhere safe.\n` +
+      `# To get a new password, delete admin.json and restart the server.\n` +
       `#\n` +
-      `#   grep GESLO ${plainPath}\n` +
-      `#   grep ZETON ${plainPath}\n` +
+      `#   grep PASSWORD ${plainPath}\n` +
+      `#   grep TOKEN ${plainPath}\n` +
       `#\n` +
-      `UPORABNIK=${username}\n` +
-      `GESLO=${geslo}\n` +
-      `# ZETON je za stroje (merilni agenti): Authorization: Bearer <ZETON>\n` +
-      `ZETON=${token}\n`,
+      `USERNAME=${username}\n` +
+      `PASSWORD=${password}\n` +
+      `# The TOKEN is for machines (measurement agents): Authorization: Bearer <TOKEN>\n` +
+      `TOKEN=${token}\n`,
       { mode: 0o600 });
     fs.chmodSync(plainPath, 0o600);
-  } catch (e) { logger.warn({ err: e.message }, 'admin-credentials.txt ni bilo mogoče zapisati'); }
+  } catch (e) { logger.warn({ err: e.message }, 'could not write admin-credentials.txt'); }
 
-  // V dnevnik gre SAMO pot do datoteke — nikoli geslo ali žeton.
-  logger.info({ uporabnik: username, datoteka: plainPath },
+  // Only the file path goes into the log — never the password or the token.
+  logger.info({ username: username, datoteka: plainPath },
     generatedPassword !== null
-      ? `Ustvarjene nove skrbniške poverilnice. Geslo dobiš z:  grep GESLO ${plainPath}`
-      : `Skrbniške poverilnice naložene. Geslo dobiš z:  grep GESLO ${plainPath}`);
+      ? `New admin credentials created. Get the password with:  grep PASSWORD ${plainPath}`
+      : `Admin credentials loaded. Get the password with:  grep PASSWORD ${plainPath}`);
 
   return { username, salt, hash, token };
 }
@@ -169,13 +170,13 @@ function loadOrCreate({ dataDir, appName, logger }) {
 function create({ dataDir, appName, logger, publicPaths = [], homePath = '/' }) {
   const creds = loadOrCreate({ dataDir, appName, logger });
   const sessions = new Map();                 // sid -> { expiresAt, csrf }
-  const alwaysPublic = new Set(['/health', '/prijava', '/odjava', ...publicPaths]);
+  const alwaysPublic = new Set(['/health', '/login', '/logout', ...publicPaths]);
 
-  // Draga preverjanja gesla so omejena po številu HKRATNIH zahtev in se ne
-  // kopičijo v čakalni vrsti: presežek dobi takoj 429. Tako en sam napadalec
-  // ne more zadržati prijave pravega skrbnika (kar bi neomejena vrsta omogočila),
-  // hkrati pa ne more zasesti niti procesorja. Trajnega zaklepanja ni.
-  // Ugibanje samo po sebi ni resna grožnja: geslo ima ~120 bitov entropije.
+  // Expensive password checks are limited by the number of CONCURRENT requests
+  // and do not pile up in a queue: the excess gets an immediate 429. That way a
+  // single attacker can neither hold up the real admin's login (which an unbounded
+  // queue would allow) nor monopolise the CPU. There is no permanent lockout.
+  // Guessing by itself is not a serious threat: the password has ~120 bits of entropy.
   let inFlight = 0;
 
   function sweep() {
@@ -196,120 +197,121 @@ function create({ dataDir, appName, logger, publicPaths = [], homePath = '/' }) 
     return s;
   }
 
-  /** Ali je zahteva overjena? Piškotek (človek) ali žeton (stroj). */
+  /** Is the request authenticated? Cookie (human) or token (machine). */
   function isAuthed(req) {
-    if (sessionOf(req)) return 'seja';
+    if (sessionOf(req)) return 'session';
     const bearer = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
     const header = req.headers['x-admin-token'];
-    if (bearer && safeEqual(bearer, creds.token)) return 'zeton';
-    if (header && safeEqual(header, creds.token)) return 'zeton';
+    if (bearer && safeEqual(bearer, creds.token)) return 'token';
+    if (header && safeEqual(header, creds.token)) return 'token';
     return null;
   }
 
-  /** Middleware: vse zapre, razen javnih poti. */
+  /** Middleware: locks everything down except the public routes. */
   function requireAdmin(req, res, next) {
     if (alwaysPublic.has(req.path)) return next();
     const how = isAuthed(req);
     if (how) { req.admin = { via: how }; return next(); }
-    // Brskalnik dobi prijavno stran, stroj pa strojno berljiv 401.
+    // A browser gets the login page; a machine gets a machine-readable 401.
     if (req.method === 'GET' && String(req.headers.accept || '').includes('text/html')) {
-      return res.redirect(302, '/prijava');
+      return res.redirect(302, '/login');
     }
     res.setHeader('WWW-Authenticate', 'Bearer realm="x402"');
     return res.status(401).json({
-      error: 'Potrebna je prijava',
-      message: 'Človek: odpri /prijava. Stroj: pošlji glavo Authorization: Bearer <ZETON>.',
-      namig: 'Žeton dobiš na strežniku z:  grep ZETON data/admin-credentials.txt'
+      error: 'Login required',
+      message: 'Human: open /login. Machine: send the Authorization: Bearer <TOKEN> header.',
+      hint: 'Get the token on the server with:  grep TOKEN data/admin-credentials.txt'
     });
   }
 
-  /** Žeton CSRF za trenutno sejo (samo za prijavljen brskalnik). */
+  /** CSRF token for the current session (logged-in browser only). */
   function csrfFor(req) { const s = sessionOf(req); return s ? s.csrf : null; }
 
   /**
-   * Dodatna zapora za poti, ki kaj sprožijo ali porabijo denar (/run/*).
+   * An extra barrier for routes that trigger something or spend money (/run/*).
    *
-   * Sam piškotek ni dovolj: `SameSite=Lax` se pošlje tudi pri GET navigaciji s
-   * tuje strani, zato bi lahko tuja stran prijavljenemu skrbniku sprožila
-   * `/run/tx?queries=200` in porabila denarnico. Zahtevamo torej še žeton, ki ga
-   * je mogoče prebrati samo z iste izvorne strani (`GET /run/zeton`), in zavrnemo
-   * zahteve, ki so videti kot krmarjenje (`Sec-Fetch-Mode: navigate`).
+   * The cookie alone is not enough: `SameSite=Lax` is also sent on GET
+   * navigation from a foreign site, so a foreign page could make a logged-in
+   * admin trigger `/run/tx?queries=200` and drain the wallet. We therefore also
+   * require a token that can only be read from the same origin
+   * (`GET /run/token`), and reject requests that look like navigation
+   * (`Sec-Fetch-Mode: navigate`).
    *
-   * Strojni dostop z `Authorization: Bearer` je izvzet — tam ni ambientalne
-   * poverilnice, torej ni CSRF.
+   * Machine access with `Authorization: Bearer` is exempt — there is no
+   * ambient credential there, hence no CSRF.
    */
   function requireCsrf(req, res, next) {
-    if (req.admin && req.admin.via === 'zeton') return next();
+    if (req.admin && req.admin.via === 'token') return next();
     const mode = String(req.headers['sec-fetch-mode'] || '');
     const site = String(req.headers['sec-fetch-site'] || '');
     if (mode === 'navigate' || (site && site !== 'same-origin')) {
-      return res.status(403).json({ error: 'Zavrnjeno: zahteva ni z iste strani (zaščita pred CSRF)' });
+      return res.status(403).json({ error: 'Rejected: request is not same-origin (CSRF protection)' });
     }
-    const given = req.query.zeton || req.headers['x-csrf'];
+    const given = req.query.token || req.headers['x-csrf'];
     const want = csrfFor(req);
     if (!want || !given || !safeEqual(given, want)) {
       return res.status(403).json({
-        error: 'Manjka ali napačen žeton CSRF',
-        namig: 'Najprej pridobi žeton na GET /run/zeton in ga dodaj kot ?zeton=…'
+        error: 'Missing or invalid CSRF token',
+        hint: 'First obtain a token from GET /run/token and append it as ?token=…'
       });
     }
     next();
   }
 
-  /** Poti za prijavo/odjavo — namesti jih PRED requireAdmin. */
+  /** Login/logout routes — mount them BEFORE requireAdmin. */
   function mount(app) {
-    // Obrazec pošlje application/x-www-form-urlencoded, API pa JSON — podpremo oboje.
+    // The form sends application/x-www-form-urlencoded, the API sends JSON — support both.
     const form = express.urlencoded({ extended: false, limit: '4kb' });
 
-    app.get('/prijava', (req, res) => {
+    app.get('/login', (req, res) => {
       if (isAuthed(req)) return res.redirect(302, homePath);
       res.type('html').status(200).send(loginPage(appName, null));
     });
 
-    app.post('/prijava', form, async (req, res) => {
+    app.post('/login', form, async (req, res) => {
       const wantsHtml = !String(req.headers['content-type'] || '').includes('application/json');
       const fail = (code, msg) => wantsHtml
         ? res.type('html').status(code).send(loginPage(appName, msg))
         : res.status(code).json({ error: msg });
       try {
         const body = req.body || {};
-        // Samo nizi: JSON lahko pripelje objekt, ki bi ob pretvorbi v niz vrgel napako.
-        const uporabnik = typeof body.uporabnik === 'string' ? body.uporabnik : '';
-        const geslo = typeof body.geslo === 'string' ? body.geslo : '';
-        if (!uporabnik || !geslo) return fail(401, 'Napačno uporabniško ime ali geslo.');
+        // Strings only: JSON may carry an object that would throw when coerced to a string.
+        const username = typeof body.username === 'string' ? body.username : '';
+        const password = typeof body.password === 'string' ? body.password : '';
+        if (!username || !password) return fail(401, 'Incorrect username or password.');
 
         if (inFlight >= MAX_LOGINS_IN_FLIGHT) {
           res.setHeader('Retry-After', '2');
-          return fail(429, 'Preveč hkratnih poskusov prijave. Poskusi znova čez nekaj sekund.');
+          return fail(429, 'Too many concurrent login attempts. Try again in a few seconds.');
         }
         inFlight++;
         let okPass;
-        try { okPass = safeEqual(await hashAsync(geslo, creds.salt), creds.hash); }
-        finally { inFlight--; }                       // zakasnitev NE sme držati mesta
-        const okUser = safeEqual(uporabnik, creds.username);
+        try { okPass = safeEqual(await hashAsync(password, creds.salt), creds.hash); }
+        finally { inFlight--; }                       // the delay must NOT hold a slot
+        const okUser = safeEqual(username, creds.username);
 
         if (!okUser || !okPass || !creds.hash) {
           await sleep(FAIL_DELAY_MS);
-          return fail(401, 'Napačno uporabniško ime ali geslo.');
+          return fail(401, 'Incorrect username or password.');
         }
         const sid = rand(32);
         sessions.set(sid, { expiresAt: Date.now() + SESSION_TTL * 1000, csrf: rand(24) });
         res.append('Set-Cookie', cookie(sid, req, SESSION_TTL));
         if (wantsHtml) return res.redirect(302, homePath);
-        return res.json({ success: true, uporabnik: creds.username, veljaSekund: SESSION_TTL });
+        return res.json({ success: true, username: creds.username, veljaSekund: SESSION_TTL });
       } catch (err) {
-        // Brez tega bi zavrnjena obljuba v Express 4 ostala neobravnavana in ubila proces.
-        logger.error({ err: err.message }, 'napaka pri prijavi');
-        if (!res.headersSent) return fail(400, 'Neveljavna zahteva za prijavo.');
+        // Without this, a rejected promise in Express 4 would go unhandled and kill the process.
+        logger.error({ err: err.message }, 'login error');
+        if (!res.headersSent) return fail(400, 'Invalid login request.');
       }
     });
 
-    app.post('/odjava', form, (req, res) => {
+    app.post('/logout', form, (req, res) => {
       const sid = readCookie(req.headers.cookie, SESSION_COOKIE);
       if (sid) sessions.delete(sid);
       res.append('Set-Cookie', cookie('', req, 0));
       if (String(req.headers['content-type'] || '').includes('application/json')) return res.json({ success: true });
-      res.redirect(302, '/prijava');
+      res.redirect(302, '/login');
     });
   }
 
@@ -317,17 +319,17 @@ function create({ dataDir, appName, logger, publicPaths = [], homePath = '/' }) 
 }
 
 /**
- * Samostojna prijavna stran. Navaden HTML obrazec brez JavaScripta — tako deluje
- * tudi pod privzetim `helmet()` CSP v mapah 02/03, kjer `script-src` ne dovoljuje
- * vgrajenih skript. Brez zunanjih virov (pisave, CDN).
+ * Self-contained login page. A plain HTML form without JavaScript — that way it
+ * also works under the default `helmet()` CSP in folders 02/03, where
+ * `script-src` does not allow inline scripts. No external resources (fonts, CDN).
  */
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 function loginPage(appName, error) {
   return `<!doctype html>
-<html lang="sl"><head><meta charset="utf-8" />
+<html lang="en"><head><meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Prijava · ${escapeHtml(appName)}</title>
+<title>Login · ${escapeHtml(appName)}</title>
 <style>
   :root{--blue:#2a78d6;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;--surface:#fff;--plane:#f4f5f7;--grid:#e1e0d9;--bad:#d03b3b}
   *{box-sizing:border-box}
@@ -346,17 +348,17 @@ function loginPage(appName, error) {
   .hint{margin-top:1.2rem;padding-top:.9rem;border-top:1px solid var(--grid);color:var(--muted);font-size:.82rem}
 </style></head>
 <body>
-  <form class="card" method="post" action="/prijava" autocomplete="off">
-    <h1>Skrbniška prijava</h1>
+  <form class="card" method="post" action="/login" autocomplete="off">
+    <h1>Admin login</h1>
     <p class="muted">${escapeHtml(appName)}</p>
-    <label for="u">Uporabniško ime</label>
-    <input id="u" name="uporabnik" autocomplete="username" autofocus required />
-    <label for="p">Geslo</label>
-    <input id="p" name="geslo" type="password" autocomplete="current-password" required />
-    <button type="submit">Prijava</button>
+    <label for="u">Username</label>
+    <input id="u" name="username" autocomplete="username" autofocus required />
+    <label for="p">Password</label>
+    <input id="p" name="password" type="password" autocomplete="current-password" required />
+    <button type="submit">Log in</button>
     ${error ? `<div class="err">${escapeHtml(error)}</div>` : ''}
-    <div class="hint">Poverilnice so na strežniku. Prijavi se po SSH in poženi:<br />
-      <code>grep GESLO data/admin-credentials.txt</code></div>
+    <div class="hint">The credentials are on the server. Log in over SSH and run:<br />
+      <code>grep PASSWORD data/admin-credentials.txt</code></div>
   </form>
 </body></html>`;
 }

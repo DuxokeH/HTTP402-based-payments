@@ -1,7 +1,7 @@
 {
-  "name": "x402-posrednik",
+  "name": "x402-facilitator",
   "version": "1.0.0",
-  "description": "X402 posrednik (facilitator) — payment-request / submit-payment / verify-proof + merjena seja; edina komponenta veje z dostopom do verige",
+  "description": "X402 facilitator (facilitator) — payment-request / submit-payment / verify-proof + merjena session; edina komponenta veje z dostopom do verige",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {

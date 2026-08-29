@@ -1,12 +1,12 @@
 # syntax=docker/dockerfile:1
-# Slika za POSREDNIKA v mapi 04_spletisce_posrednik.
-# Edina komponenta te veje, ki ima povezavo do verige (JSON-RPC).
+# Image for the FACILITATOR in the 04_website_facilitator folder.
+# The only component of this branch with a connection to the chain (JSON-RPC).
 FROM node:20-alpine AS deps
 WORKDIR /app
 RUN apk add --no-cache python3 make g++ \
  && ln -sf python3 /usr/bin/python
 COPY package.json package-lock.json* ./
-# better-sqlite3 se prevede iz izvorne kode, zato zgornji build paketi.
+# better-sqlite3 is compiled from source, hence the build packages above.
 RUN if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi
 
 FROM node:20-alpine AS runtime
@@ -15,8 +15,8 @@ RUN apk add --no-cache curl tini \
  && addgroup -S x402 && adduser -S x402 -G x402
 
 ENV NODE_ENV=production \
-    POSREDNIK_PORT=4000 \
-    DB_PATH=/app/data/posrednik.db
+    FACILITATOR_PORT=4000 \
+    DB_PATH=/app/data/facilitator.db
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY server.js db.js auth.js x402.js db_x402.js package.json ./

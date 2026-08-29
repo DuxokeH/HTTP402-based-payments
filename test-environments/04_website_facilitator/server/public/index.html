@@ -1,125 +1,125 @@
 <!doctype html>
-<html lang="sl">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>X402 — plačilni sistem s posrednikom (vse tri funkcije)</title>
+  <title>X402 — payment system with a facilitator (all three functions)</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
   <main>
     <header>
-      <h1>X402 · plačilni sistem s posrednikom</h1>
-      <p class="tagline">Tri funkcije na enem mestu: enkratno plačilo, avtomatska plačila (20 transakcij) in merjena predplačniška seja.</p>
+      <h1>X402 · payment system with a facilitator</h1>
+      <p class="tagline">Three functions in one place: a single payment, machine payments (20 transactions) and a metered prepaid session.</p>
       <p id="mode-badge" class="badge">—</p>
-      <button id="logout" class="ghost" style="margin-left:.4rem">Odjava</button>
+      <button id="logout" class="ghost" style="margin-left:.4rem">Log out</button>
     </header>
 
     <nav class="tabs">
-      <button class="tab active" data-tab="enkratno">1 · Enkratno plačilo</button>
-      <button class="tab" data-tab="tx">2 · Avtomatska plačila (20 tx)</button>
-      <button class="tab" data-tab="merjeno">3 · Merjena seja</button>
+      <button class="tab active" data-tab="single">1 · Single payment</button>
+      <button class="tab" data-tab="tx">2 · Machine payments (20 tx)</button>
+      <button class="tab" data-tab="metered">3 · Metered session</button>
     </nav>
 
-    <!-- ── 1) ENKRATNO ── -->
-    <section id="panel-enkratno" class="panel active">
+    <!-- ── 1) SINGLE ── -->
+    <section id="panel-single" class="panel active">
       <div class="card">
-        <h2>Enkratno mikroplačilo (MetaMask)</h2>
-        <p class="muted">Človek plača drobiž testnega ETH in odklene eno uporabo storitve. Ponudnik = to spletišče.</p>
-        <div class="row"><span class="label">Omrežje</span><span id="e-network" class="value">—</span></div>
-        <div class="row"><span class="label">Prejemnik</span><span id="e-merchant" class="value mono">—</span></div>
-        <div class="row"><span class="label">Cena</span><span id="e-price" class="value">—</span></div>
-        <button id="e-connect">Poveži MetaMask</button>
-        <span id="e-wallet" class="status">Ni povezano</span>
+        <h2>Single micropayment (MetaMask)</h2>
+        <p class="muted">A person pays a tiny amount of testnet ETH and unlocks a single use of the service. Provider = this website.</p>
+        <div class="row"><span class="label">Network</span><span id="e-network" class="value">—</span></div>
+        <div class="row"><span class="label">Recipient</span><span id="e-merchant" class="value mono">—</span></div>
+        <div class="row"><span class="label">Price</span><span id="e-price" class="value">—</span></div>
+        <button id="e-connect">Connect MetaMask</button>
+        <span id="e-wallet" class="status">Not connected</span>
         <div style="margin-top:.8rem">
-          <textarea id="e-prompt" rows="3" placeholder="Vpiši poziv…">Pozdravljen, svet!</textarea>
-          <button id="e-pay" disabled>Plačaj in pošlji</button>
+          <textarea id="e-prompt" rows="3" placeholder="Enter a prompt…">Hello, world!</textarea>
+          <button id="e-pay" disabled>Pay and send</button>
         </div>
         <ol id="e-steps" class="steps hidden">
-          <li id="e-s1">Plačilni izziv (402)</li>
-          <li id="e-s2">Transakcija na Sepolia</li>
-          <li id="e-s3">Prijava plačila posredniku</li>
-          <li id="e-s4">Dostop (200)</li>
+          <li id="e-s1">Payment challenge (402)</li>
+          <li id="e-s2">Transaction on Sepolia</li>
+          <li id="e-s3">Payment report to the facilitator</li>
+          <li id="e-s4">Access (200)</li>
         </ol>
         <table class="timing hidden" id="e-timing"><tbody>
-          <tr><td>t_izziv</td><td id="e-t1" class="mono">—</td></tr>
-          <tr><td>t_potrditev</td><td id="e-t2" class="mono">—</td></tr>
-          <tr><td>t_posrednik</td><td id="e-t3" class="mono">—</td></tr>
-          <tr><td>t_dostop</td><td id="e-t4" class="mono">—</td></tr>
-          <tr><td><strong>t_skupaj</strong></td><td id="e-t5" class="mono"><strong>—</strong></td></tr>
+          <tr><td>t_challenge</td><td id="e-t1" class="mono">—</td></tr>
+          <tr><td>t_confirm</td><td id="e-t2" class="mono">—</td></tr>
+          <tr><td>t_facilitator</td><td id="e-t3" class="mono">—</td></tr>
+          <tr><td>t_access</td><td id="e-t4" class="mono">—</td></tr>
+          <tr><td><strong>t_total</strong></td><td id="e-t5" class="mono"><strong>—</strong></td></tr>
         </tbody></table>
         <pre id="e-result" class="result hidden"></pre>
         <p id="e-err" class="err hidden"></p>
       </div>
     </section>
 
-    <!-- ── 2) TX (20 transakcij) ── -->
+    <!-- ── 2) TX (20 transactions) ── -->
     <section id="panel-tx" class="panel">
       <div class="card">
-        <h2>Avtomatska plačila — 1 transakcija na poizvedbo (M2M)</h2>
-        <p class="muted">Agent (stroj) za <b>vsak</b> odčitek mock IoT senzorja (temperatura+vlaga) plača <b>ločeno on-chain transakcijo</b>. 20 poizvedb = 20 transakcij — draga osnova.</p>
+        <h2>Machine payments — 1 transaction per query (M2M)</h2>
+        <p class="muted">The agent (machine) pays a <b>separate on-chain transaction</b> for <b>every</b> reading of the mock IoT sensor (temperature+humidity). 20 queries = 20 transactions — an expensive baseline.</p>
         <div class="controls">
-          <label>Št. poizvedb: <input id="tx-n" type="number" value="20" min="1" max="200" /></label>
-          <button id="tx-run">Zaženi</button>
-          <button id="tx-stop" class="ghost" disabled>Ustavi</button>
+          <label>No. of queries: <input id="tx-n" type="number" value="20" min="1" max="200" /></label>
+          <button id="tx-run">Run</button>
+          <button id="tx-stop" class="ghost" disabled>Stop</button>
         </div>
         <div class="stats">
-          <div class="stat"><div class="stat-num" id="tx-count">0</div><div class="stat-lbl">poizvedb</div></div>
-          <div class="stat"><div class="stat-num orange" id="tx-onchain">0</div><div class="stat-lbl">on-chain transakcij</div></div>
-          <div class="stat"><div class="stat-num" id="tx-fee">0</div><div class="stat-lbl">kumulativni gas [ETH]</div></div>
+          <div class="stat"><div class="stat-num" id="tx-count">0</div><div class="stat-lbl">queries</div></div>
+          <div class="stat"><div class="stat-num orange" id="tx-onchain">0</div><div class="stat-lbl">on-chain transactions</div></div>
+          <div class="stat"><div class="stat-num" id="tx-fee">0</div><div class="stat-lbl">cumulative gas [ETH]</div></div>
         </div>
         <div class="bar-wrap"><div id="tx-bar" class="bar orange"></div></div>
         <div id="tx-log" class="log"></div>
       </div>
     </section>
 
-    <!-- ── 3) MERJENO ── -->
-    <section id="panel-merjeno" class="panel">
+    <!-- ── 3) METERED ── -->
+    <section id="panel-metered" class="panel">
       <div class="card">
-        <h2>Merjena predplačniška seja — 1 polnitev + N podpisov (M2M)</h2>
-        <p class="muted">Ena on-chain polnitev odpre sejo z <b>dobroimetjem, proračunom in časom veljavnosti</b>; nato vsak odčitek plača <b>EIP-191 podpis</b> brez nove transakcije.</p>
+        <h2>Metered prepaid session — 1 top-up + N signatures (M2M)</h2>
+        <p class="muted">A single on-chain top-up opens a session with <b>credit, a budget and a validity period</b>; after that every reading is paid for with an <b>EIP-191 signature</b>, without a new transaction.</p>
         <div class="controls">
-          <label>Št. bremenitev: <input id="m-n" type="number" value="20" min="1" max="200" /></label>
-          <button id="m-run">Zaženi</button>
-          <button id="m-stop" class="ghost" disabled>Ustavi</button>
+          <label>No. of debits: <input id="m-n" type="number" value="20" min="1" max="200" /></label>
+          <button id="m-run">Run</button>
+          <button id="m-stop" class="ghost" disabled>Stop</button>
         </div>
         <div id="m-session" class="session hidden">
-          <div class="row"><span class="label">Seja</span><span id="m-sid" class="value mono">—</span></div>
-          <div class="row"><span class="label">Dobroimetje</span><span id="m-dep" class="value">—</span></div>
-          <div class="row"><span class="label">Proračun</span><span id="m-bud" class="value">—</span></div>
-          <div class="row"><span class="label">Velja do</span><span id="m-exp" class="value">—</span></div>
+          <div class="row"><span class="label">Session</span><span id="m-sid" class="value mono">—</span></div>
+          <div class="row"><span class="label">Credit</span><span id="m-dep" class="value">—</span></div>
+          <div class="row"><span class="label">Budget</span><span id="m-bud" class="value">—</span></div>
+          <div class="row"><span class="label">Valid until</span><span id="m-exp" class="value">—</span></div>
         </div>
         <div class="stats">
-          <div class="stat"><div class="stat-num" id="m-count">0</div><div class="stat-lbl">bremenitev</div></div>
-          <div class="stat"><div class="stat-num blue" id="m-onchain">1</div><div class="stat-lbl">on-chain transakcij</div></div>
-          <div class="stat"><div class="stat-num" id="m-lat">—</div><div class="stat-lbl">mediana bremenitve [ms]</div></div>
+          <div class="stat"><div class="stat-num" id="m-count">0</div><div class="stat-lbl">debits</div></div>
+          <div class="stat"><div class="stat-num blue" id="m-onchain">1</div><div class="stat-lbl">on-chain transactions</div></div>
+          <div class="stat"><div class="stat-num" id="m-lat">—</div><div class="stat-lbl">median debit [ms]</div></div>
         </div>
         <div class="bar-wrap"><div id="m-bar" class="bar blue" style="width:100%"></div></div>
-        <div class="muted small">preostalo dobroimetje</div>
+        <div class="muted small">remaining credit</div>
         <div id="m-log" class="log"></div>
       </div>
     </section>
 
-    <!-- ── Seja in identiteta (korelacija, ne avtorizacija) ── -->
+    <!-- ── Session and identity (correlation, not authorisation) ── -->
     <section class="card" id="ident">
-      <h2>Seja in identiteta</h2>
-      <p class="muted small">Strežnik ob prvem obisku shrani kratkoživ žeton <code>sid</code> v piškotek
-        (<code>HttpOnly</code>) in ga kasneje bere <b>samo za povezovanje</b> dogodkov iste seje
-        (402 → dokazilo → dostop). Identiteta je <b>denarnica in enkratni žetoni, ne IP naslov</b>,
-        zato potek preživi menjavo omrežja (wifi ↔ mobilni internet, NAT). Manjkajoč ali spremenjen
-        <code>sid</code> nikoli ne povzroči zavrnitve.</p>
-      <div class="row"><span class="label">Žeton seje (sid)</span><span id="i-sid" class="value mono">—</span></div>
-      <div class="row"><span class="label">Zahtev v seji</span><span id="i-req" class="value">—</span></div>
-      <div class="row"><span class="label">Zaznanih menjav IP</span><span id="i-ipc" class="value">—</span></div>
-      <div class="row"><span class="label">Plačnik (denarnica)</span><span id="i-payer" class="value mono">—</span></div>
-      <div class="row"><span class="label">Velja do</span><span id="i-exp" class="value">—</span></div>
+      <h2>Session and identity</h2>
+      <p class="muted small">On the first visit the server stores a short-lived <code>sid</code> token in a cookie
+        (<code>HttpOnly</code>) and later reads it <b>only to correlate</b> events of the same session
+        (402 → proof → access). Identity is <b>the wallet and one-time tokens, not the IP address</b>,
+        so the flow survives a network change (wifi ↔ mobile internet, NAT). A missing or changed
+        <code>sid</code> never causes a rejection.</p>
+      <div class="row"><span class="label">Session token (sid)</span><span id="i-sid" class="value mono">—</span></div>
+      <div class="row"><span class="label">Requests in session</span><span id="i-req" class="value">—</span></div>
+      <div class="row"><span class="label">Detected IP changes</span><span id="i-ipc" class="value">—</span></div>
+      <div class="row"><span class="label">Payer (wallet)</span><span id="i-payer" class="value mono">—</span></div>
+      <div class="row"><span class="label">Valid until</span><span id="i-exp" class="value">—</span></div>
       <div id="i-links" class="log small" style="max-height:140px;margin-top:.6rem"></div>
-      <button id="i-refresh" class="ghost">Osveži sejo</button>
+      <button id="i-refresh" class="ghost">Refresh session</button>
       <span id="i-hint" class="status"></span>
     </section>
 
     <footer>
-      <p><strong>Posredniška topologija (b)</strong> · trgovec nima dostopa do verige; JSON-RPC ima samo <em>posrednik</em> (lokalen, samogostovan). Brez pametnih pogodb (merjeni način temelji na off-chain EIP-191 podpisih). Neposredna različica iste strani je v mapi <code>05_spletisce</code>. Za slikovni dokaz poteka uporabi Wireshark (filter <code>http</code>).</p>
+      <p><strong>Facilitator topology (b)</strong> · the merchant has no access to the chain; only the <em>facilitator</em> (local, self-hosted) has JSON-RPC. Without smart contracts (the metered mode is based on off-chain EIP-191 signatures). The direct version of the same page is in the <code>05_website_direct</code> folder. For visual proof of the flow use Wireshark (filter <code>http</code>).</p>
     </footer>
   </main>
   <script type="module" src="/app.js"></script>

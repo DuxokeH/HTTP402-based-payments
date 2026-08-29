@@ -1,14 +1,14 @@
 {
-  "name": "x402-posrednik-agent",
+  "name": "x402-facilitator-agent",
   "version": "1.0.0",
-  "description": "Merilni agent za posredniško vejo (plačilo na odčitek, merjena seja, varnostni testi)",
+  "description": "Merilni agent za posredniško vejo (plačilo na odčitek, merjena session, varnostni testi)",
   "main": "agent.js",
   "type": "commonjs",
   "scripts": {
     "mock": "node agent.js --mock --tx --queries 20",
-    "mock-merjeno": "node agent.js --mock --merjeno --debits 20",
+    "mock-metered": "node agent.js --mock --metered --debits 20",
     "real": "node agent.js --real --tx --queries 20",
-    "real-merjeno": "node agent.js --real --merjeno --debits 20",
+    "real-metered": "node agent.js --real --metered --debits 20",
     "security": "node agent.js --security",
     "count": "node count-proxy.js"
   },

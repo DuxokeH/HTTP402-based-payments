@@ -2,28 +2,30 @@
 
 /**
  * ============================================================================
- *  Odjemalec POSREDNIKA — edina pot trgovca do plačilnega stanja
- *  (mapa 04_spletisce_posrednik/streznik)
+ *  FACILITATOR client — the merchant's only path to payment state
+ *  (folder 04_website_facilitator/server)
  * ============================================================================
  *
- *  V topologiji (b) trgovec verige ne vidi. Vse, kar je v neposredni izvedbi
- *  (mapa 05_spletisce) klic `provider.getTransaction(...)` ali `ethers.verifyMessage(...)`,
- *  je tukaj HTTP klic posredniku. Ta modul je natanko ta preslikava in nič drugega.
+ *  In topology (b) the merchant cannot see the chain. Everything that in the direct
+ *  implementation (folder 05_website_direct) is a `provider.getTransaction(...)` or
+ *  `ethers.verifyMessage(...)` call is an HTTP call to the facilitator here. This module
+ *  is exactly that mapping and nothing else.
  *
- *  Naslovi:
- *    POSREDNIK_URL         kamor kliče TRGOVEC (praviloma loopback, npr. http://127.0.0.1:4000)
- *    POSREDNIK_PUBLIC_URL  kar trgovec zapiše v odgovor 402, da PLAČNIK ve, kam
- *                          poslati `POST /submit-payment` (puščica C→F posredniškega toka).
- *                          Če plačnik ni na istem računalniku, mora biti to javni naslov.
+ *  Addresses:
+ *    FACILITATOR_URL         where the MERCHANT calls (normally loopback, e.g. http://127.0.0.1:4000)
+ *    FACILITATOR_PUBLIC_URL  what the merchant writes into the 402 response, so the PAYER
+ *                            knows where to send `POST /submit-payment` (arrow C→F of the
+ *                            facilitator flow). If the payer is not on the same machine,
+ *                            this must be a public address.
  *
- *  Žeton: posrednik avtenticira trgovce. Žeton dobiš z
- *      grep ZETON ../posrednik/data/admin-credentials.txt
- *  in ga vpišeš kot POSREDNIK_TOKEN v .env. Ker je posrednik v tem okolju
- *  namenoma LOKALEN (samogostovan), modul zna žeton prebrati tudi neposredno iz
- *  sosednje mape — takrat je zagon obeh procesov brez ročnega prepisovanja.
+ *  Token: the facilitator authenticates merchants. Obtain the token with
+ *      grep TOKEN ../facilitator/data/admin-credentials.txt
+ *  and enter it as FACILITATOR_TOKEN in .env. Because the facilitator is deliberately
+ *  LOCAL in this environment (self-hosted), the module can also read the token directly
+ *  from the neighbouring folder — then starting both processes needs no manual copying.
  *
- *  Nobena funkcija ne meče izjem v pot zahteve: ob nedosegljivem posredniku
- *  vrne `{ status: 0, error }`, da trgovec odgovori s 502 in ne s 500.
+ *  No function throws in the request path: when the facilitator is unreachable it
+ *  returns `{ status: 0, error }`, so the merchant answers with a 502 and not a 500.
  * ============================================================================
  */
 
@@ -32,21 +34,21 @@ const fs = require('fs');
 const path = require('path');
 const { performance } = require('perf_hooks');
 
-const POSREDNIK_URL = (process.env.POSREDNIK_URL || 'http://127.0.0.1:4000').replace(/\/+$/, '');
-const POSREDNIK_PUBLIC_URL = (process.env.POSREDNIK_PUBLIC_URL || POSREDNIK_URL).replace(/\/+$/, '');
-const TIMEOUT_MS = parseInt(process.env.POSREDNIK_TIMEOUT_MS || '20000', 10);
+const FACILITATOR_URL = (process.env.FACILITATOR_URL || 'http://127.0.0.1:4000').replace(/\/+$/, '');
+const FACILITATOR_PUBLIC_URL = (process.env.FACILITATOR_PUBLIC_URL || FACILITATOR_URL).replace(/\/+$/, '');
+const TIMEOUT_MS = parseInt(process.env.FACILITATOR_TIMEOUT_MS || '20000', 10);
 
 function resolveToken(logger) {
-  if (process.env.POSREDNIK_TOKEN) return process.env.POSREDNIK_TOKEN;
-  // Sosedska pot: oba procesa tečeta na istem gostitelju (samogostovan posrednik).
-  const file = path.join(__dirname, '..', 'posrednik', 'data', 'admin-credentials.txt');
+  if (process.env.FACILITATOR_TOKEN) return process.env.FACILITATOR_TOKEN;
+  // Neighbour path: both processes run on the same host (self-hosted facilitator).
+  const file = path.join(__dirname, '..', 'facilitator', 'data', 'admin-credentials.txt');
   try {
-    const m = /^ZETON=(.+)$/m.exec(fs.readFileSync(file, 'utf8'));
+    const m = /^TOKEN=(.+)$/m.exec(fs.readFileSync(file, 'utf8'));
     if (m) {
-      if (logger) logger.info({ file }, 'POSREDNIK_TOKEN ni nastavljen — žeton prebran iz sosednje mape posrednika');
+      if (logger) logger.info({ file }, 'FACILITATOR_TOKEN is not set — token read from the neighbouring facilitator folder');
       return m[1].trim();
     }
-  } catch { /* posrednik še ni tekel ali pa ni na tem gostitelju */ }
+  } catch { /* the facilitator has not run yet, or is not on this host */ }
   return null;
 }
 
@@ -58,23 +60,23 @@ function init(log) {
   logger = log;
   token = resolveToken(log);
   http = axios.create({
-    baseURL: POSREDNIK_URL,
+    baseURL: FACILITATOR_URL,
     timeout: TIMEOUT_MS,
     validateStatus: () => true,
     headers: { 'X-Merchant': process.env.MERCHANT_ID || 'default', ...(token ? { Authorization: `Bearer ${token}` } : {}) }
   });
-  if (!token) log.warn({ posrednik: POSREDNIK_URL }, 'Ni žetona posrednika — nastavi POSREDNIK_TOKEN (grep ZETON ../posrednik/data/admin-credentials.txt)');
+  if (!token) log.warn({ facilitator: FACILITATOR_URL }, 'No facilitator token — set FACILITATOR_TOKEN (grep TOKEN ../facilitator/data/admin-credentials.txt)');
   return module.exports;
 }
 
-// Če posrednik ob zagonu trgovca še ni tekel, žetona ni bilo. Ob prvi zavrnitvi
-// (401/403) ga poskusimo prebrati še enkrat, namesto da bi zahtevali ponovni zagon.
+// If the facilitator was not yet running when the merchant started, there was no token.
+// On the first rejection (401/403) we try to read it once more, instead of demanding a restart.
 function refreshToken() {
   const t = resolveToken(null);
   if (t && t !== token) {
     token = t;
     http.defaults.headers.Authorization = `Bearer ${token}`;
-    if (logger) logger.info('žeton posrednika osvežen');
+    if (logger) logger.info('facilitator token refreshed');
     return true;
   }
   return false;
@@ -93,28 +95,28 @@ async function call(method, url, body) {
   }
 }
 
-// ── posredniški protokol ─────────────────────────────────────────────────────
+// ── facilitator protocol ─────────────────────────────────────────────────────
 const paymentRequest = (b) => call('post', '/payment-request', b);
 const verifyProof = (b) => call('post', '/verify-proof', b);
-// ── merjena seja ─────────────────────────────────────────────────────────────
+// ── metered session ──────────────────────────────────────────────────────────
 const sessionOpen = (b) => call('post', '/session/open', b);
 const sessionView = (id) => call('get', `/session/${encodeURIComponent(id)}`);
 const debit = (b) => call('post', '/debit', b);
-// ── stanje ───────────────────────────────────────────────────────────────────
+// ── status ───────────────────────────────────────────────────────────────────
 const health = () => call('get', '/health');
-// ── x402 v2 facilitatorski klici ─────────────────────────────────────────────
-// Preverjanje/poravnavo/uskladitev opravi posrednik; trgovec še naprej NIKOLI
-// ne govori z verigo. Isti ovoj `call` ohrani žeton, ponovno prijavo in
-// števce X-Downstream-Ms — zato NE uporabljamo SDK-jevega HTTPFacilitatorClient,
-// ki bi te meritve obšel z lastnim HTTP skladom.
+// ── x402 v2 facilitator calls ────────────────────────────────────────────────
+// Verification/settlement/reconciliation is done by the facilitator; the merchant
+// still NEVER talks to the chain. The same `call` wrapper preserves the token, the
+// re-login and the X-Downstream-Ms counters — which is why we do NOT use the SDK's
+// HTTPFacilitatorClient, as it would bypass these measurements with its own HTTP stack.
 const x402Verify = (b) => call('post', '/x402/verify', b);
 const x402Settle = (b) => call('post', '/x402/settle', b);
 const x402Supported = () => call('get', '/x402/supported');
 const x402Reconcile = (b) => call('post', '/x402/reconcile', b);
 const x402Payment = (id) => call('get', `/x402/payment/${encodeURIComponent(id)}`);
 
-// Nastavitve posrednika (omrežje, mock način) s kratkim predpomnilnikom: trgovec
-// jih potrebuje za stran in za vgrajenega agenta, ne pa ob vsaki zahtevi.
+// Facilitator settings (network, mock mode) with a short cache: the merchant needs
+// them for the page and for the embedded agent, but not on every request.
 let cfgCache = null, cfgAt = 0;
 const CFG_TTL_MS = 15_000;
 async function config({ force = false } = {}) {
@@ -127,5 +129,5 @@ async function config({ force = false } = {}) {
 module.exports = {
   init, paymentRequest, verifyProof, sessionOpen, sessionView, debit, health, config,
   x402Verify, x402Settle, x402Supported, x402Reconcile, x402Payment,
-  url: POSREDNIK_URL, publicUrl: POSREDNIK_PUBLIC_URL, hasToken: () => !!token
+  url: FACILITATOR_URL, publicUrl: FACILITATOR_PUBLIC_URL, hasToken: () => !!token
 };

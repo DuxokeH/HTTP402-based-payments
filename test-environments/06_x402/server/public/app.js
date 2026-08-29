@@ -25,20 +25,20 @@ function loadProof() {
   try { return JSON.parse(sessionStorage.getItem(PROOF_KEY)); } catch { return null; }
 }
 function saveProof(p) {
-  try { sessionStorage.setItem(PROOF_KEY, JSON.stringify(p)); } catch { /* zasebni način */ }
+  try { sessionStorage.setItem(PROOF_KEY, JSON.stringify(p)); } catch { /* private mode */ }
   refreshProofUi();
 }
 function clearProof() {
-  try { sessionStorage.removeItem(PROOF_KEY); } catch { /* zasebni način */ }
+  try { sessionStorage.removeItem(PROOF_KEY); } catch { /* private mode */ }
   refreshProofUi();
 }
 function refreshProofUi() {
   const p = loadProof();
   if (p && p.proofToken) {
-    $('proof-status').textContent = `Shranjeno dokazilo: ${p.proofToken.slice(0, 14)}… (tx ${String(p.txHash).slice(0, 10)}…)`;
+    $('proof-status').textContent = `Stored proof: ${p.proofToken.slice(0, 14)}… (tx ${String(p.txHash).slice(0, 10)}…)`;
     $('check-btn').disabled = false;
   } else {
-    $('proof-status').textContent = 'Ni shranjenega dokazila.';
+    $('proof-status').textContent = 'No stored proof.';
     $('check-btn').disabled = true;
     $('proof-result').classList.add('hidden');
   }
@@ -46,12 +46,12 @@ function refreshProofUi() {
 
 async function loadConfig() {
   const r = await fetch('/config');
-  if (!r.ok) throw new Error('Napaka pri /config');
+  if (!r.ok) throw new Error('Error fetching /config');
   cfg = await r.json();
   $('cfg-network').textContent = cfg.network;
   $('cfg-merchant').textContent = cfg.merchant;
   $('cfg-price').textContent = `${cfg.service.price} ${cfg.service.currency} (≈ ${cfg.priceEurApprox} €)`;
-  $('cfg-model').textContent = cfg.aiEnabled ? cfg.model : 'demo način';
+  $('cfg-model').textContent = cfg.aiEnabled ? cfg.model : 'demo mode';
 }
 
 async function ensureSepolia() {
@@ -74,7 +74,7 @@ async function ensureSepolia() {
 
 async function connect() {
   clearError();
-  if (!window.ethereum) { showError('MetaMask ni zaznan. Namesti ga z https://metamask.io in osveži.'); return; }
+  if (!window.ethereum) { showError('MetaMask not detected. Install it from https://metamask.io and refresh.'); return; }
   try {
     const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
     account = getAddress(accounts[0]);
@@ -84,14 +84,14 @@ async function connect() {
     const bal = await publicClient.getBalance({ address: account });
     $('wallet-status').textContent = `${account.slice(0, 6)}…${account.slice(-4)} — ${formatEther(bal).slice(0, 8)} ETH`;
     $('pay-btn').disabled = false;
-  } catch (err) { showError(`Napaka denarnice: ${err.message}`); }
+  } catch (err) { showError(`Wallet error: ${err.message}`); }
 }
 
 async function pay() {
   clearError();
   const prompt = $('prompt').value.trim();
-  if (!prompt) { showError('Najprej vpiši poziv.'); return; }
-  if (!account) { showError('Najprej poveži denarnico.'); return; }
+  if (!prompt) { showError('Enter a prompt first.'); return; }
+  if (!account) { showError('Connect the wallet first.'); return; }
 
   $('pay-btn').disabled = true;
   $('result-card').classList.add('hidden');
@@ -100,16 +100,16 @@ async function pay() {
   const T = {}; const now = () => performance.now(); const T0 = now();
 
   try {
-    // 1 — challenge (sporočili 1 in 2)
+    // 1 — challenge (messages 1 and 2)
     setStep('step-request', 'active');
     let s = now();
     const chal = await fetch(`/service?payer=${account}`, { headers: { 'X-Payer': account } });
-    if (chal.status !== 402) throw new Error(`Pričakoval 402, dobil ${chal.status}`);
+    if (chal.status !== 402) throw new Error(`Expected 402, got ${chal.status}`);
     const { payment } = await chal.json();
     T.izziv = now() - s; $('t-izziv').textContent = ms(T.izziv);
     setStep('step-request', 'done');
 
-    // 2 — send tx + wait (izven HTTP)
+    // 2 — send tx + wait (outside HTTP)
     setStep('step-pay', 'active');
     s = now();
     const hash = await walletClient.sendTransaction({ account, to: getAddress(payment.to), value: parseEther(payment.amount) });
@@ -117,8 +117,8 @@ async function pay() {
     T.potrditev = now() - s; $('t-potrditev').textContent = ms(T.potrditev);
     setStep('step-pay', 'done');
 
-    // 3 — MERGED exchange (sporočili 3 in 4): tx hash od MetaMaska gre
-    // SAMODEJNO na strežnik skupaj z naročilom; nazaj prideta vsebina IN žeton.
+    // 3 — MERGED exchange (messages 3 and 4): the tx hash from MetaMask goes
+    // AUTOMATICALLY to the server together with the order; content AND the token come back.
     setStep('step-merged', 'active');
     s = now();
     const res = await fetch('/service', {
@@ -126,7 +126,7 @@ async function pay() {
       body: JSON.stringify({ requestId: payment.requestId, txHash: hash, network: payment.network, payerAddress: account, prompt })
     });
     const json = await res.json();
-    if (!res.ok) { setStep('step-merged', 'fail'); throw new Error(json.message || json.error || 'Združena izmenjava ni uspela'); }
+    if (!res.ok) { setStep('step-merged', 'fail'); throw new Error(json.message || json.error || 'The merged exchange failed'); }
     T.zdruzeno = now() - s; $('t-zdruzeno').textContent = ms(T.zdruzeno);
     setStep('step-merged', 'done');
 
@@ -145,18 +145,18 @@ async function pay() {
   }
 }
 
-// Ponovni GET z dokazilom: strežnik potrdi, da je plačilo že bilo opravljeno.
+// Repeated GET with the proof: the server confirms that the payment has already been made.
 async function checkProof() {
   clearError();
   const p = loadProof();
-  if (!p || !p.proofToken) { showError('Ni shranjenega dokazila — najprej plačaj.'); return; }
+  if (!p || !p.proofToken) { showError('No stored proof — pay first.'); return; }
   try {
     const r = await fetch('/service', { headers: { 'X-Payment': p.proofToken } });
     const json = await r.json();
     if (!r.ok) {
       $('proof-result').textContent = JSON.stringify(json, null, 2);
       $('proof-result').classList.remove('hidden');
-      if (r.status === 403) { clearProof(); showError('Dokazilo ni več veljavno (poteklo) — strežnik ga je zavrnil.'); }
+      if (r.status === 403) { clearProof(); showError('The proof is no longer valid (expired) — the server rejected it.'); }
       return;
     }
     $('proof-result').textContent = JSON.stringify(json, null, 2);
@@ -168,4 +168,4 @@ $('connect-btn').addEventListener('click', connect);
 $('pay-btn').addEventListener('click', pay);
 $('check-btn').addEventListener('click', checkProof);
 refreshProofUi();
-loadConfig().catch((e) => showError(`Napaka pri nalaganju konfiguracije: ${e.message}`));
+loadConfig().catch((e) => showError(`Error loading the configuration: ${e.message}`));

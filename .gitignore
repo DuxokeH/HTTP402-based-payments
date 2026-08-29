@@ -1,8 +1,8 @@
-# ─── Odvisnosti ──────────────────────────────────────────────────────────────
+# ─── Dependencies ──────────────────────────────────────────────────────────────
 **/node_modules/
 
-# ─── Skrivnosti — NIKOLI v git ───────────────────────────────────────────────
-# Denarnice si vsak uporabnik ustvari sam (glej README.md).
+# ─── Secrets — NEVER in git ───────────────────────────────────────────────
+# Denarnice si vsak username ustvari sam (glej README.md).
 **/wallet.json
 *.wallet.json
 **/.env
@@ -13,7 +13,7 @@
 *.pem
 **/admin-credentials.txt
 
-# ─── Podatkovne baze (SQLite) ────────────────────────────────────────────────
+# ─── Databases (SQLite) ────────────────────────────────────────────────
 **/data/
 *.db
 *.db-wal
@@ -26,15 +26,15 @@
 __pycache__/
 *.pyc
 
-# ─── Rezultati meritev (nastanejo ob zagonu, niso del repozitorija) ──────────
-**/meritve/*.csv
-**/meritve/*.json
-**/analiza/slike/
-**/primerjava/slike/
+# ─── Measurement results (generated at run time, not part of the repo) ──────────
+**/measurements/*.csv
+**/measurements/*.json
+**/analysis/figures/
+**/comparison/figures/
 *.pcapng
 *.pcap
 
-# ─── Zgrajeni svežnji ────────────────────────────────────────────────────────
+# ─── Build artefacts ────────────────────────────────────────────────────────
 dist/
 build/
 
@@ -42,7 +42,7 @@ build/
 **/caddy_data/
 **/caddy_config/
 
-# ─── Orodja in urejevalniki ──────────────────────────────────────────────────
+# ─── Tools and editors ──────────────────────────────────────────────────
 .serena/
 .claude/
 .idea/

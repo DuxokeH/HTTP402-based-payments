@@ -1,5 +1,5 @@
 {
-  "name": "x402-zdruzena-streznik",
+  "name": "x402-merged-server",
   "version": "1.0.0",
   "description": "X402 merchant server for MERGED one-time micropayments (4 HTTP messages) — measurement build",
   "main": "server.js",

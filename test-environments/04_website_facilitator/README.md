@@ -1,562 +1,574 @@
-# 04 — Spletišče s posrednikom, topologija (b)
+# 04 — Website with a facilitator, topology (b)
 
-Isti tokovi in isti odjemalski vmesnik kot v mapi [`../05_spletisce`](../05_spletisce), le da
-**trgovec nima dostopa do verige**. Vse plačilno stanje in vsa preverjanja opravi ločen
-proces — **posrednik** (facilitator).
+The same flows and the same client interface as in [`../05_website_direct`](../05_website_direct), except
+that **the merchant has no access to the chain**. All payment state and every verification is
+handled by a separate process — the **facilitator**.
 
-Kodni bazi trgovca nista dobesedno isti — v tej mapi je vsak klic verige zamenjan s klicem
-posredniku (gl. [`streznik/posrednik.js`](streznik/posrednik.js)) — enako pa je natanko
-tisto, kar meritev primerja: poti in glave, ki jih vidi odjemalec, cene in postopek
-preverjanja. Nadzorovana spremenljivka je zato topologija, z omejitvami, naštetimi spodaj.
+The two merchant code bases are not literally identical — in this folder every chain call is
+replaced by a call to the facilitator (see [`server/facilitator.js`](server/facilitator.js)) — but what
+the measurement compares is identical: the paths and headers the client sees, the prices and
+the verification procedure. The controlled variable is therefore the topology, subject to the
+limitations listed below.
 
-Mapa vsebuje **tri procese**: `posrednik/` (vrata 4000, edini z dostopom do verige),
-`streznik/` (trgovec, vrata 8081) in `agent/` (merilni odjemalec). Posrednik se zažene
-prvi, ker trgovec ob zagonu prevzame njegov strojni žeton.
+The folder holds **three processes**: `facilitator/` (port 4000, the only one with chain access),
+`server/` (the merchant, port 8081) and `agent/` (the measurement client). The facilitator has to
+start first, because the merchant picks up its machine token at startup.
 
 ```
-        topologija (a) — mapa 05                 topologija (b) — ta mapa
-   ┌──────────┐        ┌──────────┐        ┌──────────┐   ┌──────────┐   ┌──────────┐
-   │ plačnik  │◄──────►│ trgovec  │        │ plačnik  │◄─►│ trgovec  │◄─►│posrednik │
-   └────┬─────┘        └────┬─────┘        └────┬─────┘   └──────────┘   └────┬─────┘
-        │  veriga (RPC)     │                   │  POST /submit-payment (HTTP)│
-        └───────────────────┘                   │  in veriga (RPC): plačnik   │
-                                                │  piše, posrednik bere       │
-   2 razmerji · 3 izmenjave                     └─────────────────────────────┘
-                                                3 razmerja · 5 izmenjav
+        topology (a) — folder 05                  topology (b) — this folder
+   ┌──────────┐        ┌──────────┐     ┌───────────┐   ┌───────────┐   ┌─────────────┐
+   │  payer   │◄──────►│ merchant │     │   payer   │◄─►│ merchant  │◄─►│ facilitator │
+   └────┬─────┘        └────┬─────┘     └─────┬─────┘   └───────────┘   └──────┬──────┘
+        │  chain (RPC)      │                 │  POST /submit-payment (HTTP)   │
+        └───────────────────┘                 │  and chain (RPC): the payer    │
+                                              │  writes, the facilitator reads │
+   2 relationships · 3 exchanges              └────────────────────────────────┘
+                                              3 relationships · 5 exchanges
 ```
 
-Tretje razmerje je v (b) **neposredno**: plačnik pošlje `POST /submit-payment` posredniku
-mimo trgovca (to je edina javna plačilna pot posrednika), verigo pa plačnik in posrednik
-uporabljata vsak zase — plačnik odda transakcijo, posrednik jo prebere.
+In (b) the third relationship is **direct**: the payer sends `POST /submit-payment` to the
+facilitator, bypassing the merchant (this is the facilitator's only public payment path), while the
+payer and the facilitator each use the chain on their own — the payer submits the transaction, the
+facilitator reads it.
 
-## Kaj poskus meri
+## What the experiment measures
 
-| Poskus | Kaj meri | Primerja s |
+| Experiment | What it measures | Compared with |
 |---|---|---|
-| **plačilo na odčitek — mock** | posredniška veja, mock, plačilo na odčitek | mapa 02 (ista meritev brez posrednika) |
-| **plačilo na odčitek — real** | posredniška veja, prava Ethereum Sepolia | mapa 02, realni tek |
-| **merjena seja** | **posrednik × merjena seja** | mapa 03 (neposredna merjena bremenitev) |
-| **štetje sporočil** | število sporočil na plačilni tok, obe veji | trditev 3-proti-5 izmenjav |
+| **payment per reading — mock** | facilitator branch, mock, payment per reading | folder 02 (the same measurement without a facilitator) |
+| **payment per reading — real** | facilitator branch, real Ethereum Sepolia | folder 02, real run |
+| **metered session** | **facilitator × metered session** | folder 03 (direct metered debit) |
+| **message counting** | number of messages per payment flow, both branches | the 3-versus-5 exchanges claim |
 
-Vsaka vrstica CSV loči tri čase: kar meri odjemalec, `X-Server-Ms` (delo trgovca) in
-`X-Downstream-Ms` (čakanje na posrednika). Zadnji je v neposredni veji vedno 0 — razlika
-je merjeni strošek topologije. Celica **posrednik × merjena seja** je najbolj zgovorna:
-merjena bremenitev sploh ne čaka na potrditev bloka (nove transakcije ni), zato dodaten
-procesni skok tam ni utopljen v čakanju na verigo.
+Every CSV row separates three times: what the client measures, `X-Server-Ms` (the merchant's own
+work) and `X-Downstream-Ms` (time spent waiting on the facilitator). The last is always 0 in the
+direct branch — the difference is the measured cost of the topology. The
+**facilitator × metered session** cell is the most telling one: a metered debit never waits for a
+block confirmation (there is no new transaction), so the extra process hop is not drowned out
+there by waiting on the chain.
 
-### Česa poskus ne meri
+### What the experiment does not measure
 
-Posrednik je tu **lokalen in samogostovan** — na istem gostitelju kot trgovec, pod istim
-skrbnikom. Trije stroški, ki jih literatura pripisuje posrednikom (odvisnost od
-**razpoložljivosti**, odvisnost od **pravilnosti** in **privilegiran opazovalec**),
-predpostavljajo *tujo, gostovano* storitev in pri lastnem posredniku ne nastopajo.
+The facilitator here is **local and self-hosted** — on the same host as the merchant, under the
+same administrator. The three costs the literature attributes to facilitators (dependence on
+**availability**, dependence on **correctness**, and the **privileged observer**) all presuppose a
+*third-party, hosted* service and do not arise with a facilitator of your own.
 
-To poskus naredi **ožji, a strožji**: ker je zaupanje konstantno, ostane spremenljiva samo
-procesna meja. Ob branju številk je treba upoštevati dvoje:
+That makes the experiment **narrower but stricter**: because trust is held constant, the only
+variable left is the process boundary. Two things must be kept in mind when reading the numbers:
 
-1. številke **niso** merilo za stroške zaupanja gostovanega ekosistema x402;
-2. ker sta procesa na istem gostitelju, v številkah **ni omrežne razdalje** — izmerjeni
-   pribitek je zato **spodnja meja** za pravega, oddaljenega posrednika.
+1. the numbers are **not** a measure of the trust costs of the hosted x402 ecosystem;
+2. because both processes sit on the same host, the numbers contain **no network distance** — the
+   measured overhead is therefore a **lower bound** for a real, remote facilitator.
 
-### Izveden protokol
+### Implemented protocol
 
-Ime „posrednik“ nosita dva različna protokola. Ta mapa izvaja lastni posredniški tok,
-opisan spodaj, in ne uradnega toka x402:
+Two different protocols go by the name "facilitator". This folder implements its own facilitator
+flow, described below, and not the official x402 flow:
 
-| | **izvedeno tu** | uradni x402 — ni izvedeno |
+| | **implemented here** | official x402 — not implemented |
 |---|---|---|
-| poti | `payment-request` → `submit-payment` → `verify-proof` | `verify` + `settle` |
-| kdo plača gas | **plačnik**, za svojo transakcijo | **posrednik**, odda pooblastilo EIP-3009 |
-| vloga posrednika na verigi | samo **bere** | **piše** — odda pooblastilo |
-| sredstvo / omrežje | domači ETH na Ethereum Sepolia | žeton EIP-3009 (npr. USDC/EURC) |
+| paths | `payment-request` → `submit-payment` → `verify-proof` | `verify` + `settle` |
+| who pays the gas | the **payer**, for their own transaction | the **facilitator**, which submits an EIP-3009 authorisation |
+| the facilitator's role on chain | **reads** only | **writes** — submits the authorisation |
+| asset / network | native ETH on Ethereum Sepolia | EIP-3009 token (e.g. USDC/EURC) |
 
-Izbran je ta posredniški tok, ker ostane primerljiv z neposredno vejo, ker
-teče na omrežju, ki ga projekt že uporablja, in ker so primerjalne trditve te mape izrečene
-prav proti njemu. EIP-3009 (in s tem uradni tok z gostovanim posrednikom) ostaja
-nadaljnje delo; delna izvedba je v razdelku [x402 v2](#x402-v2) spodaj.
+This facilitator flow was chosen because it stays comparable with the direct branch, because it
+runs on a network the project already uses, and because this folder's comparative claims are made
+against exactly that. EIP-3009 (and with it the official flow with a hosted facilitator) remains
+future work; a partial implementation is in the [x402 v2](#x402-v2) section below.
 
-Potek (5 izmenjav / 10 sporočil / 3 razmerja):
+Flow (5 exchanges / 10 messages / 3 relationships):
 
 ```
 C → M   GET /tx/reading                        M → F   POST /payment-request
 F → M   201 {requestId, paymentInfo}           M → C   402 {…, facilitatorUrl}
-C → B   plačilna transakcija                   C → F   POST /submit-payment {requestId, txHash}
+C → B   payment transaction                    C → F   POST /submit-payment {requestId, txHash}
 F → B   getTransaction + getTransactionReceipt F → C   200 {proof.token}
 C → M   GET /tx/reading + X-Payment            M → F   POST /verify-proof {token}
-F → M   200 {verified:true}                    M → C   200 vsebina
+F → M   200 {verified:true}                    M → C   200 content
 ```
 
-Merjene seje zgornji potek ne pokriva (je razširitev), zato sledi njegovemu
-načelu — posrednik „preveri podpis, plačnikovo dobroimetje in ujemanje z navedenimi
-zahtevami“:
+Metered sessions are not covered by the flow above (they are an extension), so they follow its
+principle — the facilitator "checks the signature, the payer's credit and the match with the
+stated requirements":
 
-- `POST /session/open` — trgovec posreduje polnitev; posrednik jo potrdi na verigi in odpre
-  sejo (hrani dobroimetje, proračun, veljavnost);
-- `POST /debit` — trgovec posreduje podpisano bremenitev; posrednik preveri podpis EIP-191,
-  svežino nonca, proračun in podpisani maksimum ter odobri.
+- `POST /session/open` — the merchant forwards the top-up; the facilitator confirms it on chain and
+  opens a session (holding the credit, the budget and the validity);
+- `POST /debit` — the merchant forwards a signed debit; the facilitator checks the EIP-191
+  signature, the freshness of the nonce, the budget and the signed maximum, and approves it.
 
-Odjemalčev vmesnik je pri tem **nespremenjen** (iste poti, iste glave kot v mapi 05) — prav
-zato poskus z merjeno sejo osami topologijo in ne primerja dveh različnih API-jev.
+Throughout this the client interface stays **unchanged** (the same paths, the same headers as in
+folder 05) — which is exactly why the metered-session experiment isolates the topology instead of
+comparing two different APIs.
 
-### Popravki glede na zgodnejšo izvedbo posrednika
+### Fixes relative to an earlier facilitator implementation
 
-Zgodnejša izvedba posrednika (ni del tega repozitorija) je imela pet napak, ki bi vsaka
-zase pokvarila primerjavo. Vse so v tej mapi popravljene:
+An earlier facilitator implementation (not part of this repository) had five bugs, each of which
+would on its own have spoiled the comparison. All of them are fixed in this folder:
 
-| # | Napaka | Popravek tukaj |
+| # | Bug | Fix here |
 |---|---|---|
-| 1 | dokazni žeton se **nikoli ne porabi** — `/verify-proof` je bilo golo branje, en žeton je odklepal vir neomejeno | enkratna uporaba, pogoj `consumed_at IS NULL` je v SQL (varno tudi ob sočasnosti), TTL 600 s — enako kot v neposredni veji |
-| 2 | **ni preverjanja ponovitve `txHash`** — ena transakcija je lahko zadostila N različnim `requestId` | `redeemed_tx_hashes` s PRIMARY KEY, unovčenje in izdaja dokazila v isti transakciji baze |
-| 3 | **primerjava s plavajočo vejico** (`parseFloat(formatUnits(...)) >= parseFloat(amount)`) | izključno celoštevilski `BigInt` wei |
-| 4 | `MIN_CONFIRMATIONS` **dokumentiran, a neuveljavljen** — obstoj potrdila je veljal za dovolj | globina se res izračuna (`latest − blockNumber + 1`) in zavrne prepliten vpis |
-| 5 | **brez avtentikacije, brez omejevanja, trda vrata, stanje v pomnilniku** | strojni žeton za trgovca, omejitev hkratnih branj verige, `POSREDNIK_PORT`, SQLite namesto struktur v pomnilniku |
+| 1 | the proof token was **never consumed** — `/verify-proof` was a bare read, so a single token unlocked the resource without limit | single use, the `consumed_at IS NULL` condition lives in the SQL (safe under concurrency too), TTL 600 s — the same as in the direct branch |
+| 2 | **no `txHash` replay check** — one transaction could satisfy N different `requestId`s | `redeemed_tx_hashes` with a PRIMARY KEY; redemption and proof issuance in the same database transaction |
+| 3 | **floating-point comparison** (`parseFloat(formatUnits(...)) >= parseFloat(amount)`) | integer `BigInt` wei only |
+| 4 | `MIN_CONFIRMATIONS` **documented but not enforced** — the mere existence of a receipt counted as enough | the depth is genuinely computed (`latest − blockNumber + 1`) and too shallow an entry is rejected |
+| 5 | **no authentication, no rate limiting, a hard-coded port, state in memory** | a machine token for the merchant, a cap on concurrent chain reads, `FACILITATOR_PORT`, SQLite instead of in-memory structures |
 
-Popravki 1, 2, 3 in 5 so pokriti z `node agent.js --security`; popravek 4 preveriš ročno
-(glej [Varnostni testi](#varnostni-testi)).
+Fixes 1, 2, 3 and 5 are covered by `node agent.js --security`; fix 4 you verify by hand
+(see [Security tests](#security-tests)).
 
-## Zahteve
+## Requirements
 
-- **Node.js ≥ 20** in npm (posrednik, trgovec, agent).
-- **Python ≥ 3.9** za analizo (`matplotlib`, `pandas`, `numpy`).
-- Za mock način: nič drugega — nobenih sredstev, nobene verige.
-- Za realni način (prave transakcije): **financirana denarnica na omrežju Ethereum Sepolia** in dostopna
-  končna točka JSON-RPC. Testni ETH dobiš iz javnega faucet-a za Sepolio. Repozitorij ne
-  vsebuje nobenih ključev in nobene denarnice — te si ustvariš sam.
-- Za Docker varianto: Docker in `docker compose`.
+- **Node.js ≥ 20** and npm (facilitator, merchant, agent).
+- **Python ≥ 3.9** for the analysis (`matplotlib`, `pandas`, `numpy`).
+- For mock mode: nothing else — no funds, no chain.
+- For real mode (real transactions): **a funded wallet on the Ethereum Sepolia network** and a
+  reachable JSON-RPC endpoint. Test ETH comes from a public Sepolia faucet. The repository holds
+  no keys and no wallet — you create those yourself.
+- For the Docker variant: Docker and `docker compose`.
 
-## Struktura mape
+## Folder structure
 
 ```
-04_spletisce_posrednik/
-├─ posrednik/          EDINI z dostopom do verige (vrata 4000)
+04_website_facilitator/
+├─ facilitator/        THE ONLY one with chain access (port 4000)
 │  ├─ server.js · db.js · auth.js · x402.js · db_x402.js
 │  ├─ Dockerfile · .env.example · wallet.example.json · package.json
-│  └─ data/            nastane ob zagonu: posrednik.db, admin-credentials.txt
-├─ streznik/           trgovec — spletišče BREZ verige (vrata 8081)
-│  ├─ server.js · posrednik.js · runner.js · db.js · auth.js · x402.js · db_x402.js
+│  └─ data/            created at startup: facilitator.db, admin-credentials.txt
+├─ server/             the merchant — website WITHOUT the chain (port 8081)
+│  ├─ server.js · facilitator.js · runner.js · db.js · auth.js · x402.js · db_x402.js
 │  ├─ public/          index.html · app.js · styles.css
 │  ├─ Dockerfile · .env.example · wallet.example.json · package.json
-│  └─ data/            nastane ob zagonu: spletisce_posrednik.db, admin-credentials.txt
-├─ agent/              merilni odjemalec
-│  ├─ agent.js         plačilo na odčitek / merjena seja / varnostni testi / x402
-│  ├─ count-proxy.js   števni posredovalnik (štetje sporočil)
-│  └─ x402-odjemalec.js · config.json · wallet.example.json · package.json
-├─ analiza/            analiza_posrednik.py · slog.py · requirements.txt
-│  └─ slike/           nastane šele ob zagonu analize
-├─ meritve/            CSV in JSON rezultati (nastanejo šele ob meritvi) + README.md
-├─ docker-compose.yml  tri storitve: posrednik · trgovec · caddy
+│  └─ data/            created at startup: website_facilitator.db, admin-credentials.txt
+├─ agent/              the measurement client
+│  ├─ agent.js         payment per reading / metered session / security tests / x402
+│  ├─ count-proxy.js   counting proxy (message counting)
+│  └─ x402-client.js · config.json · wallet.example.json · package.json
+├─ analysis/           facilitator_analysis.py · style.py · requirements.txt
+│  └─ figures/         created only when the analysis runs
+├─ measurements/       CSV and JSON results (created only when you measure) + README.md
+├─ docker-compose.yml  three services: facilitator · merchant · caddy
 ├─ Caddyfile
-└─ README.md           (ta datoteka)
+└─ README.md           (this file)
 ```
 
-Ključna datoteka za razumevanje topologije je [`streznik/posrednik.js`](streznik/posrednik.js):
-je natanko preslikava „vsak klic verige → klic posredniku“ in nič drugega.
+The key file for understanding the topology is [`server/facilitator.js`](server/facilitator.js):
+it is exactly the mapping "every chain call → a call to the facilitator", and nothing else.
 
-## Namestitev
+## Installation
 
 ```bash
-cd testna-okolja/04_spletisce_posrednik
+cd test-environments/04_website_facilitator
 
-# posrednik
-cd posrednik && npm ci && cp .env.example .env && cd ..
+# facilitator
+cd facilitator && npm ci && cp .env.example .env && cd ..
 
-# trgovec
-cd streznik && npm ci && cp .env.example .env
-cp wallet.example.json wallet.json      # vpiši SVOJ naslov prejemnika (address)
+# merchant
+cd server && npm ci && cp .env.example .env
+cp wallet.example.json wallet.json      # enter YOUR OWN receiver address
 cd ..
 
-# merilni agent
+# measurement agent
 cd agent && npm ci && cd ..
 ```
 
-`npm ci` uporabi priložen `package-lock.json`; če ta iz kakršnega koli razloga ne ustreza,
-uporabi `npm install`.
+`npm ci` uses the bundled `package-lock.json`; if that does not work out for any reason, use
+`npm install`.
 
-Denarnice:
+Wallets:
 
-- **trgovec** potrebuje `streznik/wallet.json` z naslovom prejemnika, sicer se ne zažene;
-  privatni ključ tam ni potreben (v mock načinu ga ne vpisuj).
-- **posrednik denarnice nima** — verigo samo bere. `posrednik/wallet.example.json` je
-  potreben šele za poravnalni ključ vzporednega načina x402.
-- **agent** potrebuje `agent/wallet.json` samo za `--real`; v mock načinu si ustvari
-  enkratno denarnico brez sredstev.
+- the **merchant** needs `server/wallet.json` with the receiver address, otherwise it will not
+  start; no private key is needed there (do not put one in for mock mode).
+- the **facilitator has no wallet** — it only reads the chain. `facilitator/wallet.example.json` is
+  needed only for the settlement key of the parallel x402 mode.
+- the **agent** needs `agent/wallet.json` only for `--real`; in mock mode it creates a
+  single-use wallet with no funds.
 
-Ključe si ustvariš sam. Repozitorij jih ne vsebuje in `.gitignore` `wallet.json` ter `.env`
-namenoma izključuje.
+You create the keys yourself. The repository does not contain them, and `.gitignore` deliberately
+excludes `wallet.json` and `.env`.
 
-## Lokalni zagon — mock (brez sredstev)
+## Local run — mock (no funds)
 
-Trije terminali. **Posrednika zaženi prvega**, ker trgovec ob zagonu prebere njegov strojni
-žeton iz `../posrednik/data/admin-credentials.txt`. (Če vrstni red obrneš, trgovec žeton ob
-prvi zavrnitvi 401/403 prebere naknadno — a le, kadar je posrednikova mapa `data/` na istem
-gostitelju in dosegljiva. V Dockerju to ne velja, tam je `POSREDNIK_TOKEN` obvezen.)
+Three terminals. **Start the facilitator first**, because at startup the merchant reads its machine
+token from `../facilitator/data/admin-credentials.txt`. (If you reverse the order, the merchant
+reads the token later, on the first 401/403 rejection — but only when the facilitator's `data/`
+folder is on the same host and reachable. That does not hold under Docker, where
+`FACILITATOR_TOKEN` is mandatory.)
 
 ```bash
-# 1) posrednik
-cd testna-okolja/04_spletisce_posrednik/posrednik
+# 1) facilitator
+cd test-environments/04_website_facilitator/facilitator
 npm run mock                       # → http://localhost:4000
 
-# 2) trgovec
-cd testna-okolja/04_spletisce_posrednik/streznik
+# 2) merchant
+cd test-environments/04_website_facilitator/server
 npm run mock                       # → http://localhost:8081
 ```
 
-Če procesa ločiš (drug gostitelj, Docker), žeton prenesi ročno:
+If you split the processes (another host, Docker), transfer the token by hand:
 
 ```bash
-grep ZETON posrednik/data/admin-credentials.txt   # → POSREDNIK_TOKEN v streznik/.env
+grep TOKEN facilitator/data/admin-credentials.txt   # → FACILITATOR_TOKEN in server/.env
 ```
 
-Skrbniško geslo spletišča (obe komponenti imata **ločeni** prijavi):
+The website's admin password (the two components have **separate** logins):
 
 ```bash
-grep GESLO streznik/data/admin-credentials.txt    # prijava v spletišče trgovca
-grep GESLO posrednik/data/admin-credentials.txt   # ločena prijava posrednika
+grep GESLO server/data/admin-credentials.txt    # login to the merchant website
+grep GESLO facilitator/data/admin-credentials.txt   # the facilitator's separate login
 ```
 
-Preveri, da je veja skladna:
+Check that the branch is consistent:
 
 ```bash
 curl -s localhost:8081/health | python3 -m json.tool
-#   "veriga": "ni dostopa (samo posrednik)"
-#   "posrednik": "ok",  "neskladjeMock": false
+#   "chain": "no access (facilitator only)"
+#   "facilitator": "ok",  "mockMismatch": false
 ```
 
-Obe mock meritvi v tretjem terminalu:
+Both mock measurements in the third terminal:
 
 ```bash
-cd testna-okolja/04_spletisce_posrednik/agent
-export ADMIN_TOKEN=$(grep '^ZETON=' ../streznik/data/admin-credentials.txt | cut -d= -f2)
+cd test-environments/04_website_facilitator/agent
+export ADMIN_TOKEN=$(grep '^TOKEN=' ../server/data/admin-credentials.txt | cut -d= -f2)
 
-npm run mock            # plačilo na odčitek prek posrednika (20 poizvedb)
-npm run mock-merjeno    # merjena seja prek posrednika (20 bremenitev)
+npm run mock            # payment per reading through the facilitator (20 queries)
+npm run mock-metered    # metered session through the facilitator (20 debits)
 ```
 
-`ADMIN_TOKEN` je žeton **trgovca** (spletišče je zaprto s skrbniško prijavo). Posrednikova
-pot `/submit-payment` je javna in žetona ne potrebuje.
+`ADMIN_TOKEN` is the **merchant's** token (the website is closed behind an admin login). The
+facilitator's `/submit-payment` path is public and needs no token.
 
-Zastavice agenta (CLI prepiše okoljsko spremenljivko, ta pa `agent/config.json`):
-`--mock` / `--real`, `--tx` / `--merjeno`, `--queries N` (20), `--debits N` (20),
-`--pause-ms N`, `--topup-wei`, `--merchant-url`, `--posrednik-url`, `--rpc-url`,
-`--confirmations`, `--out <pot.csv>`, `--security`, `--x402`.
+Agent flags (the CLI overrides the environment variable, which in turn overrides
+`agent/config.json`): `--mock` / `--real`, `--tx` / `--metered`, `--queries N` (20), `--debits N` (20),
+`--pause-ms N`, `--topup-wei`, `--merchant-url`, `--facilitator-url`, `--rpc-url`,
+`--confirmations`, `--out <path.csv>`, `--security`, `--x402`.
 
-### Štetje sporočil
+### Message counting
 
-Posredniška veja potrebuje **dva** števca, ker ima tri razmerja. Trgovca je treba pognati
-**skozi** števec posrednika, sicer se izmenjavi `payment-request` in `verify-proof` sploh
-ne preštejeta in namesto petih izmenjav jih naštejemo tri.
+The facilitator branch needs **two** counters, because it has three relationships. The merchant has
+to be run **through** the facilitator's counter, otherwise the `payment-request` and `verify-proof`
+exchanges are not counted at all and we end up counting three exchanges instead of five.
 
 ```bash
-# 1) števca (dve okni)
-cd testna-okolja/04_spletisce_posrednik/agent
-node count-proxy.js --listen=3101 --target=http://127.0.0.1:8081 --tag=trgovec
-node count-proxy.js --listen=3102 --target=http://127.0.0.1:4000 --tag=posrednik
+# 1) the counters (two windows)
+cd test-environments/04_website_facilitator/agent
+node count-proxy.js --listen=3101 --target=http://127.0.0.1:8081 --tag=merchant
+node count-proxy.js --listen=3102 --target=http://127.0.0.1:4000 --tag=facilitator
 
-# 2) trgovca ponovno zaženi TAKO, da posrednika kliče skozi števec 3102
-cd ../streznik && POSREDNIK_URL=http://127.0.0.1:3102 npm run mock
+# 2) restart the merchant SO THAT it calls the facilitator through counter 3102
+cd ../server && FACILITATOR_URL=http://127.0.0.1:3102 npm run mock
 
-# 3) en sam plačilni tok skozi oba števca
+# 3) a single payment flow through both counters
 cd ../agent && node agent.js --mock --tx --queries 1 \
-    --merchant-url http://127.0.0.1:3101 --posrednik-url http://127.0.0.1:3102
+    --merchant-url http://127.0.0.1:3101 --facilitator-url http://127.0.0.1:3102
 
-# 4) Ctrl+C v obeh števcih → izpis povzetka in meritve/e9_<oznaka>.csv
+# 4) Ctrl+C in both counters → prints the summary and measurements/e9_<tag>.csv
 ```
 
-Za neposredno vejo isto z enim števcem pred mapo 05 (tam mora teči njen strežnik na 8080):
+For the direct branch, do the same with a single counter in front of folder 05 (its server has to be
+running there on 8080):
 
 ```bash
 node count-proxy.js --listen=3101 --target=http://127.0.0.1:8080 --tag=neposredno
 ```
 
-Pričakovano: **posredniška 5 izmenjav / 10 sporočil**, **neposredna 3 / 6**. Števec posluša
-samo na `127.0.0.1`. Pripravljalne poti (`/config`, `/health`, `/prijava`, `/odjava`,
-`/seja`, `/run/*`, `/favicon*`) in dolgo živeči pretoki SSE so v CSV zabeleženi s stolpcem
-`placilna=0` in se v plačilni tok ne štejejo.
+Expected: **5 exchanges / 10 messages for the facilitator branch**, **3 / 6 for the direct one**. The
+counter listens on `127.0.0.1` only. Setup paths (`/config`, `/health`, `/login`, `/logout`,
+`/session`, `/run/*`, `/favicon*`) and long-lived SSE streams are recorded in the CSV with the
+column `payment=0` and do not count towards the payment flow.
 
-### Zajem z Wiresharkom
+### Wireshark capture
 
-Ta veja ima **dva** prometna para, zato zajemi oba: vrata **8081** (odjemalec ↔ trgovec) in
-**4000** (odjemalec ↔ posrednik in trgovec ↔ posrednik). Šele oboje skupaj pokaže vseh pet
-izmenjav. Splošna navodila za zajem (vmesnik, prijava, sejni piškotek) so v
-[zajem z Wiresharkom](../README.md#zajem-z-wiresharkom), filtri za to vejo pa so spodaj; ker Wireshark privzeto
-kot HTTP razbira le znana vrata, na 4000 in 8081 uporabi **Decode As → HTTP**.
+This branch has **two** traffic pairs, so capture both: port **8081** (client ↔ merchant) and
+**4000** (client ↔ facilitator, and merchant ↔ facilitator). Only the two together show all five
+exchanges. General capture instructions (interface, login, session cookie) are in
+[Wireshark capture](../README.md#wireshark-capture); the filters for this branch are below. Because
+Wireshark by default dissects only well-known ports as HTTP, use **Decode As → HTTP** on 4000
+and 8081.
 
 ```
 tcp.port == 8081 || tcp.port == 4000
-http.request.uri contains "submit-payment"    # puščica plačnik → posrednik
-http.request.uri contains "verify-proof"      # puščica trgovec → posrednik
+http.request.uri contains "submit-payment"    # the payer → facilitator arrow
+http.request.uri contains "verify-proof"      # the merchant → facilitator arrow
 ```
 
-### Preverjanje: trgovec res nima verige
+### Verification: the merchant really has no chain
 
-Najostrejši preizkus, da topologija (b) ni le poimenovanje. Trgovcu daj **pokvarjen**
-`RPC_URL`, agentu pa pravega — plačila morajo teči naprej, ker trgovec verige nikoli ne
-kliče. Dokaz je prepričljiv samo v realnem načinu: v mock načinu agent verige sploh ne
-uporablja, zato tam `--rpc-url` ničesar ne dokazuje.
+The sharpest test that topology (b) is more than just a label. Give the merchant a **broken**
+`RPC_URL` and the agent a working one — payments must keep going through, because the merchant
+never calls the chain. The proof is convincing only in real mode: in mock mode the agent does not
+use the chain at all, so `--rpc-url` proves nothing there.
 
-V **obeh** `.env` mora biti `MOCK_VERIFY=false` (posrednik mora res brati verigo). Če se
-načina razlikujeta, agent meritev zavrne z „Neskladje načina“ in ne dokaže ničesar.
+`MOCK_VERIFY=false` has to be set in **both** `.env` files (the facilitator really does have to read
+the chain). If the modes differ, the agent refuses the measurement with "Mode mismatch" and
+proves nothing.
 
 ```bash
-# trgovec z nesmiselnim RPC (posrednik teče normalno)
-cd streznik && RPC_URL=http://127.0.0.1:1 npm start
+# the merchant with a nonsense RPC (the facilitator runs normally)
+cd server && RPC_URL=http://127.0.0.1:1 npm start
 
-# agent s pravim RPC in financirano denarnico
+# the agent with a working RPC and a funded wallet
 cd agent
-export ADMIN_TOKEN=$(grep '^ZETON=' ../streznik/data/admin-credentials.txt | cut -d= -f2)
+export ADMIN_TOKEN=$(grep '^TOKEN=' ../server/data/admin-credentials.txt | cut -d= -f2)
 node agent.js --real --tx --queries 5 --rpc-url https://ethereum-sepolia-rpc.publicnode.com
 ```
 
-Isto pokaže statična preveritev, ki ne stane nič:
+A static check that costs nothing shows the same thing:
 
 ```bash
-grep -n "JsonRpcProvider" streznik/server.js    # samo v komentarjih
-grep -n "JsonRpcProvider" posrednik/server.js   # tu je edini pravi
+grep -n "JsonRpcProvider" server/server.js    # in comments only
+grep -n "JsonRpcProvider" facilitator/server.js   # the only real one is here
 ```
 
-Izjema, ki jo je pošteno navesti: `streznik/runner.js` **ima** `JsonRpcProvider`. To ni
-trgovčeva vloga, ampak vgrajeni plačnik za gumba `/run/tx` in `/run/merjeno` (puščica C→B
-na diagramu) — isti posel kot zunanji agent, le da teče v istem procesu. Trgovčeva pot
-zahteve (`server.js`, `posrednik.js`) verige ne doseže; zunanji agent zato dokaže več kot
-`grep`.
+One exception worth stating honestly: `server/runner.js` **does** have a `JsonRpcProvider`. That is
+not the merchant's role but the built-in payer behind the `/run/tx` and `/run/metered` buttons (the
+C→B arrow on the diagram) — the same job as the external agent, only running in the same process.
+The merchant's request path (`server.js`, `facilitator.js`) never reaches the chain; the external
+agent therefore proves more than `grep` does.
 
-## Lokalni zagon — realne meritve (Sepolia)
+## Local run — real measurements (Sepolia)
 
-Realni tek zahteva **financirano testno denarnico**; brez nje ga ni mogoče izvesti.
+A real run requires **a funded test wallet**; without one it cannot be carried out.
 
-1. V `agent/wallet.json` vpiši privatni ključ financirane denarnice na Sepolii
-   (`cp wallet.example.json wallet.json`). Testni ETH dobiš iz javnega faucet-a.
-2. V `streznik/wallet.json` vpiši naslov prejemnika (lahko druga tvoja denarnica).
-3. V **obeh** `.env` nastavi `MOCK_VERIFY=false` in delujoč `RPC_URL`
-   (`posrednik/.env` je edini, kjer se `RPC_URL` res uporabi; trgovčev je le namig, ki ga
-   posreduje plačniku).
-4. Zaženi posrednika in trgovca z `npm start` (namesto `npm run mock`), nato agenta:
+1. Put the private key of a funded Sepolia wallet into `agent/wallet.json`
+   (`cp wallet.example.json wallet.json`). Test ETH comes from a public faucet.
+2. Put the receiver address into `server/wallet.json` (it can be another wallet of yours).
+3. Set `MOCK_VERIFY=false` and a working `RPC_URL` in **both** `.env` files
+   (`facilitator/.env` is the only place where `RPC_URL` is actually used; the merchant's is only a
+   hint that it passes on to the payer).
+4. Start the facilitator and the merchant with `npm start` (instead of `npm run mock`), then the agent:
 
 ```bash
-cd testna-okolja/04_spletisce_posrednik/posrednik && npm start     # → :4000
-cd testna-okolja/04_spletisce_posrednik/streznik  && npm start     # → :8081
+cd test-environments/04_website_facilitator/facilitator && npm start     # → :4000
+cd test-environments/04_website_facilitator/server  && npm start     # → :8081
 
-cd testna-okolja/04_spletisce_posrednik/agent
-export ADMIN_TOKEN=$(grep '^ZETON=' ../streznik/data/admin-credentials.txt | cut -d= -f2)
-npm run real            # plačilo na odčitek · prave transakcije na Sepolii
-npm run real-merjeno    # merjena seja s pravo polnitvijo
+cd test-environments/04_website_facilitator/agent
+export ADMIN_TOKEN=$(grep '^TOKEN=' ../server/data/admin-credentials.txt | cut -d= -f2)
+npm run real            # payment per reading · real transactions on Sepolia
+npm run real-metered    # metered session with a real top-up
 ```
 
-Vsaka poizvedba v `--real` počaka na potrditev bloka, zato tek 20 poizvedb traja nekaj
-minut in porabi testni ETH (gas + `PRICE_WEI_PER_READING`). Agent globino potrditev
-privzeto prevzame od posrednika; z `--confirmations N` jo lahko prisiliš.
+Every query in `--real` waits for a block confirmation, so a run of 20 queries takes a few
+minutes and spends test ETH (gas + `PRICE_WEI_PER_READING`). By default the agent takes the
+confirmation depth from the facilitator; `--confirmations N` lets you force it.
 
-Varnostni testi v realnem načinu **ne delujejo** (`--real --security` se konča z napako) —
-namenoma, ker bi napadalni scenariji porabljali prava sredstva.
+The security tests **do not work** in real mode (`--real --security` exits with an error) —
+deliberately, because the attack scenarios would spend real funds.
 
-## Zagon na oddaljenem strežniku
+## Running on a remote server
 
-Strežniška procesa (posrednik in trgovec) poslušata na `0.0.0.0` in tečeta po **navadnem
-HTTP** — tako je zato, da je promet berljiv z Wiresharkom. Dostop zato omeji na svoj IP ali
-uporabi Docker + Caddy varianto s TLS spodaj.
+Both server processes (facilitator and merchant) listen on `0.0.0.0` and run over **plain
+HTTP** — that is so the traffic is readable in Wireshark. Restrict access to your own IP, or use
+the Docker + Caddy variant with TLS below.
 
 ```bash
-ssh <UPORABNIK>@<IP_STREZNIKA>
-git clone <naslov-repozitorija> x402
-cd x402/testna-okolja/04_spletisce_posrednik
+ssh <USER>@<SERVER_IP>
+git clone <repository-url> x402
+cd x402/test-environments/04_website_facilitator
 
-# namestitev je enaka kot lokalno (npm ci + .env + wallet.json)
+# installation is the same as locally (npm ci + .env + wallet.json)
 
-sudo ufw allow 4000/tcp    # posrednik — plačnik pošlje /submit-payment NARAVNOST sem
-sudo ufw allow 8081/tcp    # trgovec
+sudo ufw allow 4000/tcp    # facilitator — the payer sends /submit-payment STRAIGHT here
+sudo ufw allow 8081/tcp    # merchant
 ```
 
-V `streznik/.env` je za oddaljenega plačnika **obvezna** ena nastavitev:
+One setting in `server/.env` is **mandatory** for a remote payer:
 
 ```bash
-POSREDNIK_PUBLIC_URL=http://<IP_STREZNIKA>:4000   # to trgovec zapiše v odgovor 402
-POSREDNIK_URL=http://127.0.0.1:4000               # kamor kliče trgovec sam
+FACILITATOR_PUBLIC_URL=http://<SERVER_IP>:4000   # what the merchant writes into the 402 response
+FACILITATOR_URL=http://127.0.0.1:4000            # where the merchant itself calls
 ```
 
-Brez `POSREDNIK_PUBLIC_URL` zunanji agent ali brskalnik dobi v odgovoru 402 naslov
-`http://127.0.0.1:4000` in `POST /submit-payment` ne more oddati.
+Without `FACILITATOR_PUBLIC_URL` an external agent or browser gets the address
+`http://127.0.0.1:4000` in the 402 response and cannot submit `POST /submit-payment`.
 
-Strežnika tečeta na VM, **agent poženeš lokalno** z ustreznima naslovoma:
+The servers run on the VM, **you run the agent locally** with the matching addresses:
 
 ```bash
-export ADMIN_TOKEN=<ZETON iz streznik/data/admin-credentials.txt na strežniku>
+export ADMIN_TOKEN=<TOKEN from server/data/admin-credentials.txt on the server>
 node agent.js --mock --tx --queries 20 \
-    --merchant-url http://<IP_STREZNIKA>:8081 \
-    --posrednik-url http://<IP_STREZNIKA>:4000
+    --merchant-url http://<SERVER_IP>:8081 \
+    --facilitator-url http://<SERVER_IP>:4000
 ```
 
-### Docker in Caddy (s TLS)
+### Docker and Caddy (with TLS)
 
-`docker-compose.yml` je v **korenu te mape** (ne v `streznik/`), ker sta aplikacijski
-storitvi dve. Ime projekta je izrecno `x402-posrednik`: sicer bi ga Compose izpeljal iz
-imena mape in bi si ta veja tiho delila omrežje in nosilce z mapo 05.
+`docker-compose.yml` sits in **the root of this folder** (not in `server/`), because there are two
+application services. The project name is set explicitly to `x402-facilitator`: otherwise Compose
+would derive it from the folder name and this branch would quietly share its network and volumes
+with folder 05.
 
 ```bash
-cp posrednik/.env.example posrednik/.env
-cp streznik/.env.example  streznik/.env
-cp streznik/wallet.example.json streznik/wallet.json   # vpiši naslov prejemnika
-# v Caddyfile vpiši svojo domeno (privzeto je zapisana kot tvoja-domena.si)
+cp facilitator/.env.example facilitator/.env
+cp server/.env.example  server/.env
+cp server/wallet.example.json server/wallet.json   # enter the receiver address
+# put your own domain into the Caddyfile (it is written as your-domain.example by default)
 
-docker compose up -d posrednik
-grep ZETON posrednik/data/admin-credentials.txt        # → POSREDNIK_TOKEN v streznik/.env
+docker compose up -d facilitator
+grep TOKEN facilitator/data/admin-credentials.txt        # → FACILITATOR_TOKEN in server/.env
 docker compose up -d
 ```
 
-V vsebnikih trgovec ne more brati posrednikove mape `data/`, zato je `POSREDNIK_TOKEN`
-tam **obvezen**. `POSREDNIK_URL=http://posrednik:4000` nastavi Compose sam.
+Inside containers the merchant cannot read the facilitator's `data/` folder, so
+`FACILITATOR_TOKEN` is **mandatory** there. `FACILITATOR_URL=http://facilitator:4000` is set by
+Compose itself.
 
-Caddy posrednika izpostavi pod predpono `/posrednik` (`handle_path` jo odstrani, poti
-posrednika ostanejo nespremenjene), ker plačnik pošlje `POST /submit-payment` naravnost
-njemu. V `streznik/.env` zato nastavi
-`POSREDNIK_PUBLIC_URL=https://<tvoja-domena>/posrednik` in `COOKIE_SECURE=true`.
+Caddy exposes the facilitator under the `/facilitator` prefix (`handle_path` strips it, so the
+facilitator's own paths stay unchanged), because the payer sends `POST /submit-payment` straight to
+it. In `server/.env` therefore set
+`FACILITATOR_PUBLIC_URL=https://<your-domain>/facilitator` and `COOKIE_SECURE=true`.
 
-Vrata obeh aplikacijskih storitev so v `docker-compose.yml` **zakomentirana**: odkomentiraj
-jih samo za zajem po navadnem HTTP (Wireshark, LAN). Pod TLS vsebina ni vidna, zato zajem
-delaj po naslovu `<IP_STREZNIKA>:8081` in `<IP_STREZNIKA>:4000`, ne po domeni.
+The ports of both application services are **commented out** in `docker-compose.yml`: uncomment
+them only for a plain-HTTP capture (Wireshark, LAN). Under TLS the content is not visible, so do
+the capture against `<SERVER_IP>:8081` and `<SERVER_IP>:4000`, not against the domain.
 
-Poti `/run/tx` in `/run/merjeno` sprožita vgrajenega agenta in v realnem načinu porabljata
-prava sredstva. Aplikacija ju zapira s skrbniško prijavo; v `Caddyfile` je pripravljen še
-zakomentiran `basic_auth` za `/run/*`.
+The `/run/tx` and `/run/metered` paths trigger the built-in agent and spend real funds in real
+mode. The application closes them behind the admin login; the `Caddyfile` also has a commented-out
+`basic_auth` for `/run/*` ready to go.
 
-## Analiza rezultatov
+## Result analysis
 
 ```bash
-cd testna-okolja/04_spletisce_posrednik/analiza
+cd test-environments/04_website_facilitator/analysis
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python3 analiza_posrednik.py             # → analiza/slike/
+python3 facilitator_analysis.py             # → analysis/figures/
 ```
 
-Argumenta: `--nacin mock|real` (privzeto poskusi oba, kar najde) in `--out <mapa>`
-(privzeto `analiza/slike`, mapa nastane sama). Permutacijski test je lastna implementacija
-(20 000 ponovitev, fiksno seme), zato `scipy` ni potreben.
+Two arguments: `--mode mock|real` (by default it tries both, whichever it finds) and `--out <folder>`
+(default `analysis/figures`, the folder is created automatically). The permutation test is a local
+implementation (20 000 repetitions, fixed seed), so `scipy` is not required.
 
-**Vhodi.** Skripta bere lastne `meritve/posrednik_tx_*.csv`, `meritve/posrednik_merjeno_*.csv`
-in `meritve/e9_*.csv`, za **primerjalni sliki** pa še CSV iz sosednjih map:
+**Inputs.** The script reads its own `measurements/facilitator_tx_*.csv`,
+`measurements/facilitator_metered_*.csv` and `measurements/e9_*.csv`, and for the **two comparison
+figures** also CSV files from the neighbouring folders:
 
-- plačilo na odčitek → `../../02_avtomatska_placila_transakcije/meritve/transakcije_*.csv`
-- merjena seja → `../../03_avtomatska_placila_dobroimetje/meritve/dobroimetje_*.csv`
+- payment per reading → `../../02_machine_payments_per_request/measurements/transactions_*.csv`
+- metered session → `../../03_machine_payments_prepaid/measurements/credit_*.csv`
 
-Če teh ni, nastanejo samo `e7_faze_<nacin>.png` (in `e9_sporocila.png`, če je bilo izvedeno
-štetje sporočil), primerjalnih slik pa ne — v izpisu to pove vrstica
-„neposredne meritve (mapa 02/03) ni“.
-Nadomestne vzorčne podatke za mape 01–03 lahko ustvariš z
-`../../primerjava/generiraj_vzorec.py`; slike, narisane iz njih, dobijo vodni žig. Za mapo
-04 vzorčnih podatkov ni — te si ustvariš z lastnim tekom.
+If those are missing, only `e7_phases_<mode>.png` is produced (plus `e9_messages.png`, if message
+counting was run), but no comparison figures — the output says so with the line
+"no direct measurement (folder 02/03)".
+Substitute sample data for folders 01–03 can be generated with
+`../../comparison/generate_sample.py`; figures drawn from it carry a watermark. There is no sample
+data for folder 04 — you produce that with a run of your own.
 
-Če ni nobene meritve, skripta izpiše navodilo in se konča z izhodno kodo 1.
+If there is no measurement at all, the script prints instructions and exits with code 1.
 
-## Pričakovani izhodi
+## Expected outputs
 
-CSV in JSON v `meritve/` (mapa je ob prevzemu brez rezultatov — v njej je le `README.md`):
+CSV and JSON in `measurements/` (on checkout the folder holds no results — only `README.md`):
 
-| Datoteka | Nastane z |
+| File | Created by |
 |---|---|
-| `posrednik_tx_mock.csv` / `posrednik_tx_real.csv` | `agent.js --tx` (plačilo na odčitek, mock / real) |
-| `posrednik_merjeno_mock.csv` / `posrednik_merjeno_real.csv` | `agent.js --merjeno` (merjena seja) |
-| `posrednik_tx_*_povzetek.json`, `posrednik_merjeno_*_povzetek.json` | isto — strnjena statistika teka |
-| `posrednik_varnost.csv` | `agent.js --security` (stolpci `test,pricakovano,dejansko,uspeh`) |
-| `e9_trgovec.csv`, `e9_posrednik.csv`, `e9_neposredno.csv` | `count-proxy.js --tag=<oznaka>` → `e9_<oznaka>.csv` |
-| `x402_posrednik_tx_mock.csv` | `agent.js --x402` (brez `_povzetek.json`) |
-| `x402_posrednik_varnost.csv` | `agent.js --x402 --security` |
+| `facilitator_tx_mock.csv` / `facilitator_tx_real.csv` | `agent.js --tx` (payment per reading, mock / real) |
+| `facilitator_metered_mock.csv` / `facilitator_metered_real.csv` | `agent.js --metered` (metered session) |
+| `facilitator_tx_*_summary.json`, `facilitator_metered_*_summary.json` | the same — condensed run statistics |
+| `facilitator_security.csv` | `agent.js --security` (columns `test,expected,actual,passed`) |
+| `e9_merchant.csv`, `e9_facilitator.csv`, `e9_neposredno.csv` | `count-proxy.js --tag=<tag>` → `e9_<tag>.csv` |
+| `x402_facilitator_tx_mock.csv` | `agent.js --x402` (no `_summary.json`) |
+| `x402_facilitator_varnost.csv` | `agent.js --x402 --security` |
 
-> **Meritvene CSV se DOPOLNJUJEJO, ne prepisujejo.** Pred ponovitvijo istega poskusa staro
-> datoteko izbriši, sicer se dva teka zlijeta v enega in analiza ju obravnava kot en vzorec.
-> Varnostni CSV se ob vsakem teku prepišeta.
+> **Measurement CSVs are APPENDED TO, not overwritten.** Delete the old file before repeating the
+> same experiment, otherwise two runs merge into one and the analysis treats them as a single
+> sample. The security CSVs are overwritten on every run.
 
-Slike v `analiza/slike/` (150 dpi; mapa nastane ob prvem zagonu analize):
-`e7_faze_<mock|real>.png`, `e7_topologija_<nacin>.png`, `e8_merjeno_topologija_<nacin>.png`,
-`e9_sporocila.png` in zbirna tabela `posrednik_povzetek.csv`.
+Figures in `analysis/figures/` (150 dpi; the folder is created on the first analysis run):
+`e7_phases_<mock|real>.png`, `e7_topology_<mode>.png`, `e8_metered_topology_<mode>.png`,
+`e9_messages.png`, plus the summary table `facilitator_summary.csv`.
 
-Signali uspeha:
+Signs of success:
 
-- `/health` trgovca vrne `"veriga": "ni dostopa (samo posrednik)"`, `"posrednik": "ok"` in
-  `"neskladjeMock": false`;
-- agent ob koncu teka izpiše povzetek in pot do zapisane CSV;
-- vsi varnostni testi izpišejo `✓` in izhodna koda je 0;
-- analiza za vsako sliko izpiše vrstico `✓ slika: …`.
+- the merchant's `/health` returns `"chain": "no access (facilitator only)"`, `"facilitator": "ok"`
+  and `"mockMismatch": false`;
+- at the end of a run the agent prints a summary and the path to the CSV it wrote;
+- every security test prints `✓` and the exit code is 0;
+- the analysis prints a `✓ figure: …` line for every figure.
 
-## Varnostni testi
+## Security tests
 
 ```bash
-cd testna-okolja/04_spletisce_posrednik/agent
-export ADMIN_TOKEN=$(grep '^ZETON=' ../streznik/data/admin-credentials.txt | cut -d= -f2)
+cd test-environments/04_website_facilitator/agent
+export ADMIN_TOKEN=$(grep '^TOKEN=' ../server/data/admin-credentials.txt | cut -d= -f2)
 npm run security          # = node agent.js --security
 ```
 
-Zahteve: oba strežniška procesa tečeta, `ADMIN_TOKEN` trgovca je nastavljen in veja je v
-**mock** načinu — `--real --security` se namenoma konča z napako. Zbirka ima **20 testov**:
-trgovec brez verige, `/tx/verify` vrne 404, enkratnost dokazila (napaka 1), ponovna uporaba
-`txHash` (napaka 2), celoštevilska primerjava wei (napaka 3), avtentikacija posrednika
-(napaka 5), `/health` ostaja javen, ter merjena seja (manjkajoč podpis → 402, ponovitev
-nonca → 403, ponarejen podpis → 403, zastarel nonce → 400, presežen proračun → 402,
-izčrpano dobroimetje → 402, podpis za drugo sejo → 403). Če kateri test pade, je izhodna
-koda 1.
+Requirements: both server processes are running, the merchant's `ADMIN_TOKEN` is set, and the
+branch is in **mock** mode — `--real --security` deliberately exits with an error. The suite has
+**20 tests**: the merchant without a chain, `/tx/verify` returning 404, single use of the proof
+(bug 1), `txHash` reuse (bug 2), integer wei comparison (bug 3), facilitator authentication
+(bug 5), `/health` staying public, and the metered session (missing signature → 402, nonce replay
+→ 403, forged signature → 403, stale nonce → 400, budget exceeded → 402, credit exhausted → 402,
+signature for another session → 403). If any test fails, the exit code is 1.
 
-Popravek napake 4 (`MIN_CONFIRMATIONS`) v zbirki ni, ker zahteva prirejen RPC. Preveri ga
-ročno: globinski test se sproži šele pri `MIN_CONFIRMATIONS > 1`, zato v mapi `posrednik`
-poženi `MOCK_VERIFY=false MIN_CONFIRMATIONS=3 RPC_URL=<prirejen> npm start` — vpis v plitvem
-bloku mora vrniti sporočilo `Premalo potrditev (N < M)`.
+The fix for bug 4 (`MIN_CONFIRMATIONS`) is not in the suite, because it needs a doctored RPC.
+Verify it by hand: the depth check only fires at `MIN_CONFIRMATIONS > 1`, so in the `facilitator`
+folder run `MOCK_VERIFY=false MIN_CONFIRMATIONS=3 RPC_URL=<doctored> npm start` — an entry in a
+shallow block must return the message `Too few confirmations (N < M)`.
 
-Razdelitev pooblastil je namenoma stroga in jo testi preverjajo:
+The separation of privileges is deliberately strict, and the tests check it:
 
-- **posrednik** — javno je samo `/health`, `/config`, `/submit-payment`, `/x402/supported`,
-  `/prijava`, `/odjava`; vse ostalo (`/payment-request`, `/verify-proof`, `/session/*`,
-  `/debit`, `/x402/verify`, `/x402/settle`, `/x402/reconcile`, `/x402/payment/:id`)
-  zahteva `Authorization: Bearer <ZETON>`;
-- **trgovec** — zaprto je vse razen `/health`, `/prijava` in `/odjava`.
+- **facilitator** — only `/health`, `/config`, `/submit-payment`, `/x402/supported`,
+  `/login` and `/logout` are public; everything else (`/payment-request`, `/verify-proof`,
+  `/session/*`, `/debit`, `/x402/verify`, `/x402/settle`, `/x402/reconcile`, `/x402/payment/:id`)
+  requires `Authorization: Bearer <TOKEN>`;
+- **merchant** — everything is closed except `/health`, `/login` and `/logout`.
 
 ## x402 v2
 
-Posrednik poleg lastnega protokola (nedotaknjen; osnova za vse meritve te mape) izvaja tudi **prave
-facilitatorske poti x402**: `POST /x402/verify`, `POST /x402/settle` (oboje s strojnim
-žetonom), javni `GET /x402/supported` in dodatek `POST /x402/reconcile`. Posrednik poseduje
-poravnalni ključ in edini dostop do verige. Trgovec (`X402_MODE=facilitated`) streže
-`GET /x402/enkratno/service` in `GET /x402/tx/reading` ter ob zagonu **odkloni**
-`X402_RPC_URL` in vsak drug način kot `facilitated` — brez verige ostane v obeh načinih.
-Merjeni tok ostane izključno na lastnem protokolu.
+Alongside its own protocol (untouched; the basis for every measurement in this folder), the
+facilitator also implements the **real x402 facilitator paths**: `POST /x402/verify`,
+`POST /x402/settle` (both with the machine token), the public `GET /x402/supported` and the
+additional `POST /x402/reconcile`. The facilitator holds the settlement key and the sole chain
+access. The merchant (`X402_MODE=facilitated`) serves `GET /x402/single/service` and
+`GET /x402/tx/reading`, and at startup it **rejects** `X402_RPC_URL` and any mode other than
+`facilitated` — it stays chainless in both modes. The metered flow remains exclusively on the
+project's own protocol.
 
 ```bash
-# posrednik:  X402_MODE=self X402_MOCK=true npm run mock
-# trgovec:    X402_MODE=facilitated npm run mock
+# facilitator:  X402_MODE=self X402_MOCK=true npm run mock
+# merchant:    X402_MODE=facilitated npm run mock
 
 cd agent
-export ADMIN_TOKEN=$(grep '^ZETON=' ../streznik/data/admin-credentials.txt | cut -d= -f2)
-node agent.js --x402 --queries 20     # → meritve/x402_posrednik_tx_mock.csv
-node agent.js --x402 --security       # 11 testov (T1–T11)
+export ADMIN_TOKEN=$(grep '^TOKEN=' ../server/data/admin-credentials.txt | cut -d= -f2)
+node agent.js --x402 --queries 20     # → measurements/x402_facilitator_tx_mock.csv
+node agent.js --x402 --security       # 11 tests (T1–T11)
 ```
 
-Konfiguracija je **testna**: denominirana v domačem ETH na Ethereum Sepolii, poravnava pa je
-sintetična (mock). Pravi, ne-mock tek je zaklenjen namenoma — domači ETH nima pogodbe
-EIP-3009, zato bi ga bilo treba priklopiti na žeton (USDC/EURC). Podrobnosti so v
-[uradni protokol x402 v2](../README.md#uradni-protokol-x402-v2).
+The configuration is a **test** one: denominated in native ETH on Ethereum Sepolia, with synthetic
+(mock) settlement. A real, non-mock run is locked deliberately — native ETH has no EIP-3009
+contract, so it would first have to be wired up to a token (USDC/EURC). Details are in
+[the official x402 v2 protocol](../README.md#official-x402-v2-protocol).
 
-## Prenosljivost na druga omrežja
+## Portability to other networks
 
-Ali bi ta veja tekla na Sepolii, produkcijskem Ethereumu, Bitcoinu ali z žetoni USDC/EURC —
-in kaj bi bilo treba za to spremeniti — je opisano v [`../docs/OMREZJA.md`](../docs/OMREZJA.md). Na
-kratko: posredniška veja je za preskok na žetone **najkrajša pot**, ker se ob prehodu
-spremeni samo posrednik, trgovec pa ostane nedotaknjen.
+Whether this branch would run on Sepolia, on production Ethereum, on Bitcoin or with USDC/EURC
+tokens — and what would have to change for that — is described in
+[`../docs/NETWORKS.md`](../docs/NETWORKS.md). In short: the facilitator branch is the
+**shortest path** to a switch to tokens, because the transition changes only the facilitator and
+leaves the merchant untouched.
 
-## Odpravljanje težav
+## Troubleshooting
 
-| Simptom | Vzrok in rešitev |
+| Symptom | Cause and fix |
 |---|---|
-| trgovec se ob zagonu ustavi z `Copy wallet.example.json -> wallet.json` | manjka `streznik/wallet.json` z naslovom prejemnika |
-| `/health` vrne `"posrednik": "down"` | posrednik ne teče ali je `POSREDNIK_URL` napačen — posrednika **zaženi prvega** |
-| `/health` vrne `"neskladjeMock": true` | `MOCK_VERIFY` se med trgovcem in posrednikom razlikuje; poenoti obe `.env` |
-| trgovec vrača 401 na vsem razen `/health`, `/prijava` in `/odjava` | agentu manjka `ADMIN_TOKEN` trgovca (ne posrednikov) |
-| posrednik vrača 401 na `/payment-request` | trgovcu manjka `POSREDNIK_TOKEN` (obvezen, kadar ne more brati posrednikove mape `data/`) |
-| zunanji plačnik ne more oddati `/submit-payment` | v `streznik/.env` manjka `POSREDNIK_PUBLIC_URL=http://<IP_STREZNIKA>:4000` |
-| števec našteje 3 izmenjave namesto 5 | trgovec ni pognan skozi števec — `POSREDNIK_URL=http://127.0.0.1:3102 npm run mock` |
-| trgovec se ustavi z napako o `X402_RPC_URL` | v topologiji (b) trgovec verige ne sme imeti; spremenljivko odstrani |
-| analiza nariše samo `e7_faze_*.png` | manjkajo CSV iz map 02 in 03 (glej [Analiza rezultatov](#analiza-rezultatov)) |
-| analiza se konča z izhodno kodo 1 | v `meritve/` ni nobene CSV — najprej poženi meritev |
+| the merchant stops at startup with `Copy wallet.example.json -> wallet.json` | `server/wallet.json` with the receiver address is missing |
+| `/health` returns `"facilitator": "down"` | the facilitator is not running, or `FACILITATOR_URL` is wrong — **start the facilitator first** |
+| `/health` returns `"mockMismatch": true` | `MOCK_VERIFY` differs between the merchant and the facilitator; make both `.env` files agree |
+| the merchant returns 401 on everything except `/health`, `/login` and `/logout` | the agent is missing the merchant's `ADMIN_TOKEN` (not the facilitator's) |
+| the facilitator returns 401 on `/payment-request` | the merchant is missing `FACILITATOR_TOKEN` (mandatory whenever it cannot read the facilitator's `data/` folder) |
+| an external payer cannot submit `/submit-payment` | `FACILITATOR_PUBLIC_URL=http://<SERVER_IP>:4000` is missing from `server/.env` |
+| the counter counts 3 exchanges instead of 5 | the merchant was not run through the counter — `FACILITATOR_URL=http://127.0.0.1:3102 npm run mock` |
+| the merchant stops with an error about `X402_RPC_URL` | in topology (b) the merchant must not have a chain; remove the variable |
+| the analysis draws only `e7_phases_*.png` | the CSV files from folders 02 and 03 are missing (see [Result analysis](#result-analysis)) |
+| the analysis exits with code 1 | there is no CSV in `measurements/` — run a measurement first |
 
-Splošna navodila: [`testna-okolja/README.md`](../README.md) — razdelka
-[Kaj pokaže katero okolje](../README.md#kaj-pokaže-katero-okolje) in
-[Priporočen vrstni red poskusov](../README.md#priporočen-vrstni-red-poskusov);
-[skrbniška prijava](../README.md#skrbniška-prijava) (skrbniške prijave in žetoni);
-[`../docs/IDENTITETA.md`](../docs/IDENTITETA.md) (seje in omejevanje). Recept za štetje
-sporočil je v razdelku [Štetje sporočil](#štetje-sporočil) zgoraj.
+General instructions: [`test-environments/README.md`](../README.md) — the
+[What each environment shows](../README.md#what-each-environment-shows) and
+[Recommended experiment order](../README.md#recommended-experiment-order) sections;
+[admin login](../README.md#admin-login) (admin logins and tokens);
+[`../docs/IDENTITY.md`](../docs/IDENTITY.md) (sessions and rate limiting). The recipe for message
+counting is in the [Message counting](#message-counting) section above.

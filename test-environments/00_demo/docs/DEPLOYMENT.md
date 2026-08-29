@@ -1,38 +1,38 @@
-# Postavitev na oddaljenem strežniku
+# Deployment on a remote server
 
-Navodila za javno postavitev demo okolja na **katerem koli strežniku z Linuxom** — najetem
-virtualnem strežniku (VPS), lastnem stroju v omrežju ali napravi doma. Nič v tem postopku ni
-vezano na določenega ponudnika.
+Instructions for deploying the demo environment publicly on **any Linux server** — a rented
+virtual server (VPS), your own machine on the network, or a device at home. Nothing in this
+procedure is tied to a particular provider.
 
-Za lokalni zagon teh navodil ne potrebuješ — glej [`../README.md`](../README.md).
+You do not need these instructions for a local run — see [`../README.md`](../README.md).
 
-> **Kdaj to sploh potrebuješ.** Za preizkus protokola zadostuje lokalni zagon. Oddaljena
-> postavitev je smiselna, kadar hočeš plačati z MetaMask iz telefona, pokazati okolje nekomu
-> drugemu ali zajeti promet, ki teče čez pravo omrežje.
+> **When you actually need this.** A local run is enough to try the protocol out. A remote
+> deployment makes sense when you want to pay with MetaMask from your phone, show the environment
+> to someone else, or capture traffic that travels across a real network.
 
-## Kaj potrebuješ
+## What you need
 
-- strežnik z **Ubuntu 22.04 ali novejšim** (zadostuje 1 vCPU in 1 GB pomnilnika), z dostopom
-  ssh in javnim naslovom IP
-- **domeno**, če hočeš HTTPS (brez nje deluje samo dostop po IP in navadnem HTTP)
-- denarnico na omrežju **Ethereum Sepolia** s testnim ETH (samo za realni način)
-- neobvezno **ključ OpenAI**, če hočeš prave odgovore namesto nadomestnih
+- a server with **Ubuntu 22.04 or newer** (1 vCPU and 1 GB of memory is enough), with ssh access
+  and a public IP address
+- a **domain**, if you want HTTPS (without one, only access over IP and plain HTTP works)
+- a wallet on the **Ethereum Sepolia** network holding test ETH (real mode only)
+- optionally an **OpenAI key**, if you want real answers instead of stub ones
 
-## 1. Pripravi strežnik
+## 1. Prepare the server
 
 ```bash
-ssh <UPORABNIK>@<IP_STREZNIKA>
+ssh <USER>@<SERVER_IP>
 
-# posodobitve
+# updates
 sudo apt update && sudo apt upgrade -y
 
-# Docker (uradna namestitvena skripta)
+# Docker (official install script)
 curl -fsSL https://get.docker.com | sudo sh
 sudo usermod -aG docker "$USER"
-exit          # odjavi se in znova prijavi, da se članstvo v skupini uveljavi
+exit          # log out and back in so that the group membership takes effect
 ```
 
-### Požarni zid
+### Firewall
 
 ```bash
 sudo ufw allow OpenSSH
@@ -42,192 +42,193 @@ sudo ufw enable
 sudo ufw status
 ```
 
-Če strežnik teče pri ponudniku oblaka, ima ta **svoj požarni zid pred strežnikom** — ista
-vrata moraš odpreti tudi tam, sicer `ufw` ne pomaga. Znak, da je to težava: povezava se
-izteče brez odgovora, namesto da bi jo strežnik zavrnil.
+If the server runs at a cloud provider, that provider has **its own firewall in front of the
+server** — you have to open the same ports there as well, or `ufw` alone will not help. The
+tell-tale sign that this is the problem: the connection times out with no answer, instead of the
+server refusing it.
 
-> **Dostop po ssh omeji na svoj naslov IP**, če ga imaš stalnega:
-> `sudo ufw allow from <TVOJ_IP> to any port 22 proto tcp` in nato `sudo ufw delete allow OpenSSH`.
+> **Restrict ssh access to your own IP address** if you have a static one:
+> `sudo ufw allow from <YOUR_IP> to any port 22 proto tcp`, followed by `sudo ufw delete allow OpenSSH`.
 
-## 2. Domena in DNS (neobvezno, a priporočeno)
+## 2. Domain and DNS (optional, but recommended)
 
-Pri registrarju domene dodaj zapis **A**, ki kaže na javni naslov strežnika:
+At your domain registrar, add an **A** record pointing to the server's public address:
 
-| Tip | Ime | Vrednost | Proxy |
+| Type | Name | Value | Proxy |
 |---|---|---|---|
-| A | `x402` (ali `@`) | `<IP_STREZNIKA>` | izklopljen |
+| A | `x402` (or `@`) | `<SERVER_IP>` | off |
 
-Če ponudnik DNS ponuja posredniški način („proxy", „oblak"), ga **izklopi** — Caddy mora sam
-pridobiti potrdilo Let's Encrypt, za to pa mora vrata 80 in 443 doseči neposredno.
+If your DNS provider offers a proxying mode ("proxy", "cloud"), **turn it off** — Caddy has to
+obtain the Let's Encrypt certificate itself, and for that ports 80 and 443 must reach it directly.
 
-Preveri, da se ime razreši:
+Check that the name resolves:
 
 ```bash
-dig +short x402.tvoja-domena.si
+dig +short x402.your-domain.example
 ```
 
-## 3. Ustvari denarnici
+## 3. Create the wallets
 
-Denarnici ustvari **na svojem računalniku, ne na strežniku**, in na strežnik prenesi samo
-tisto, kar tam res rabiš:
+Create the wallets **on your own computer, not on the server**, and copy over only what the
+server genuinely needs:
 
 ```bash
-# lokalno
-cd testna-okolja/00_demo
+# locally
+cd test-environments/00_demo
 npm ci
-node generate-wallet.js        # ustvari server/wallet.json in klient/wallet.json
+node generate-wallet.js        # creates server/wallet.json and client/wallet.json
 ```
 
-Strežnik potrebuje **samo denarnico trgovca** (prejemnika), ki nikoli ne potrebuje sredstev:
+The server needs **only the merchant wallet** (the recipient), which never needs any funds:
 
 ```bash
-scp server/wallet.json <UPORABNIK>@<IP_STREZNIKA>:~/wallet.json
+scp server/wallet.json <USER>@<SERVER_IP>:~/wallet.json
 ```
 
-> Datoteka ima pravice `0600`. Denarnica odjemalca (`klient/wallet.json`) ostane pri tebi —
-> ta je edina, ki hrani sredstva. Uporabljaj izključno namensko testno denarnico.
+> The file carries `0600` permissions. The client wallet (`client/wallet.json`) stays with you —
+> it is the only one that holds funds. Use a dedicated test wallet and nothing else.
 
-## 4. Prenesi in nastavi projekt
+## 4. Clone and configure the project
 
 ```bash
-ssh <UPORABNIK>@<IP_STREZNIKA>
-git clone <url-repozitorija> ~/x402-repo
-cd ~/x402-repo/testna-okolja/00_demo/server
+ssh <USER>@<SERVER_IP>
+git clone <repo-url> ~/x402-repo
+cd ~/x402-repo/test-environments/00_demo/server
 cp .env.example .env
 nano .env
 ```
 
-Nastavitve, o katerih se je vredno odločiti:
+Settings worth thinking about:
 
-| Spremenljivka | Priporočeno za javno postavitev |
+| Variable | Recommended for a public deployment |
 |---|---|
-| `NODE_ENV` | `production` — vklopi strogi CORS in izklopi razvojno beleženje |
-| `ALLOWED_ORIGINS` | `https://x402.tvoja-domena.si` (z vejico ločeni izvori) |
-| `RPC_URL` | javno vozlišče deluje; za več prometa vpiši lasten ponudnik JSON-RPC |
-| `MIN_CONFIRMATIONS` | `1` na Sepolii |
-| `SERVICE_PRICE_ETH` | cena ene uporabe storitve |
-| `OPENAI_API_KEY` | prazno → nadomestni odgovor; vpisan → pravi klici |
-| `OPENAI_DAILY_USD_CAP` | mehka dnevna meja |
+| `NODE_ENV` | `production` — turns on strict CORS and turns off development logging |
+| `ALLOWED_ORIGINS` | `https://x402.your-domain.example` (comma-separated origins) |
+| `RPC_URL` | the public node works; for heavier traffic enter your own JSON-RPC provider |
+| `MIN_CONFIRMATIONS` | `1` on Sepolia |
+| `SERVICE_PRICE_ETH` | price of a single service call |
+| `OPENAI_API_KEY` | empty → stub response; filled in → real calls |
+| `OPENAI_DAILY_USD_CAP` | soft daily limit |
 
-> **Če vpišeš ključ OpenAI**, nastavi **trdo mesečno mejo porabe tudi pri ponudniku ključa.**
-> Nastavitev `OPENAI_DAILY_USD_CAP` je le mehka zaščita v tej aplikaciji in ne prepreči
-> stroškov, če ključ uide.
+> **If you do enter an OpenAI key**, also set a **hard monthly spending cap with the key's
+> provider.** `OPENAI_DAILY_USD_CAP` is only a soft safeguard inside this application and will not
+> prevent costs if the key leaks.
 
-Denarnico trgovca prestavi na mesto:
+Move the merchant wallet into place:
 
 ```bash
-mv ~/wallet.json ~/x402-repo/testna-okolja/00_demo/server/wallet.json
-chmod 600 ~/x402-repo/testna-okolja/00_demo/server/wallet.json
+mv ~/wallet.json ~/x402-repo/test-environments/00_demo/server/wallet.json
+chmod 600 ~/x402-repo/test-environments/00_demo/server/wallet.json
 ```
 
-## 5. Zaženi
+## 5. Run it
 
-### Varianta A — Docker in Caddy (s HTTPS)
+### Option A — Docker and Caddy (with HTTPS)
 
-V `Caddyfile` zamenjaj `your-domain.example` s svojo domeno, nato:
+In the `Caddyfile`, replace `your-domain.example` with your own domain, then:
 
 ```bash
-cd ~/x402-repo/testna-okolja/00_demo/server
+cd ~/x402-repo/test-environments/00_demo/server
 docker compose up -d
-docker compose logs -f          # Ctrl-C prekine spremljanje, storitvi tečeta naprej
+docker compose logs -f          # Ctrl-C stops the log stream; the services keep running
 ```
 
-Caddy potrdilo pridobi sam ob prvem obisku. Preveri:
+Caddy obtains the certificate by itself on the first visit. Check:
 
 ```bash
-curl -s http://localhost:3000/health          # z gostitelja
-curl -s https://x402.tvoja-domena.si/health   # od zunaj
-# pričakuj {"status":"ok","db":"ok","rpc":"ok",…}
+curl -s http://localhost:3000/health             # from the host itself
+curl -s https://x402.your-domain.example/health  # from outside
+# expect {"status":"ok","db":"ok","rpc":"ok",…}
 ```
 
-### Varianta B — brez Dockerja (systemd)
+### Option B — without Docker (systemd)
 
 ```bash
-cd ~/x402-repo/testna-okolja/00_demo/server
+cd ~/x402-repo/test-environments/00_demo/server
 npm ci
 sudo cp systemd/x402.service /etc/systemd/system/
-sudo nano /etc/systemd/system/x402.service    # popravi User= in WorkingDirectory=
+sudo nano /etc/systemd/system/x402.service    # fix User= and WorkingDirectory=
 sudo systemctl daemon-reload
 sudo systemctl enable --now x402
 sudo systemctl status x402
 journalctl -u x402 -f
 ```
 
-### Varianta C — samo HTTP, za zajem z Wiresharkom
+### Option C — plain HTTP, for a Wireshark capture
 
-Za opazovanje protokola potrebuješ **nešifriran** promet, torej brez Caddyja:
+To observe the protocol you need **unencrypted** traffic, which means running without Caddy:
 
 ```bash
-sudo ufw allow from <TVOJ_IP> to any port 3000 proto tcp
-cd ~/x402-repo/testna-okolja/00_demo/server && npm ci && npm start
+sudo ufw allow from <YOUR_IP> to any port 3000 proto tcp
+cd ~/x402-repo/test-environments/00_demo/server && npm ci && npm start
 ```
 
-> Tako postavljen strežnik **ne sme ostati javno dosegljiv**. Dokazni žeton je „bearer"
-> poverilnica — kdor ga po nešifrirani povezavi prestreže, dostopa do vsebine. Po zajemu
-> strežnik ustavi in vrata zapri.
+> A server set up this way **must not be left publicly reachable**. The proof token is a bearer
+> credential — anyone who intercepts it on the unencrypted connection gets access to the content.
+> When you are done capturing, stop the server and close the port.
 
-## 6. Preveri od konca do konca
+## 6. Verify end to end
 
-Iz brskalnika odpri `https://x402.tvoja-domena.si`, poveži MetaMask (omrežje Sepolia) in
-opravi plačilo. V dnevniku strežnika se mora pojaviti vrstica o preverjeni transakciji, nato
-pa dostava vsebine.
+From a browser, open `https://x402.your-domain.example`, connect MetaMask (Sepolia network) and
+make a payment. A line about the verified transaction must appear in the server log, followed by
+the content delivery.
 
-Z odjemalcem CLI z lastnega računalnika:
+With the CLI client from your own computer:
 
 ```bash
-cd testna-okolja/00_demo/klient
-# v config.json nastavi MERCHANT_URL na https://x402.tvoja-domena.si
+cd test-environments/00_demo/client
+# in config.json set MERCHANT_URL to https://x402.your-domain.example
 npm ci && node run.js --pause-ms 1500
 ```
 
-## 7. Vzdrževanje
+## 7. Maintenance
 
-**Posodobitev:**
+**Updating:**
 
 ```bash
 cd ~/x402-repo && git pull
-cd testna-okolja/00_demo/server && docker compose up -d --build
+cd test-environments/00_demo/server && docker compose up -d --build
 ```
 
-**Varnostna kopija.** Pomembni sta samo dve stvari: `server/wallet.json` (denarnica trgovca)
-in `server/data/x402.db` (plačilne zahteve, dokazila, poraba). Kopijo hrani **izven** strežnika:
+**Backups.** Only two things matter: `server/wallet.json` (the merchant wallet) and
+`server/data/x402.db` (payment requests, proofs, spending). Keep the copy **off** the server:
 
 ```bash
-# z lastnega računalnika
-scp <UPORABNIK>@<IP_STREZNIKA>:~/x402-repo/testna-okolja/00_demo/server/wallet.json ./varnostna-kopija/
-scp <UPORABNIK>@<IP_STREZNIKA>:~/x402-repo/testna-okolja/00_demo/server/data/x402.db ./varnostna-kopija/
+# from your own computer
+scp <USER>@<SERVER_IP>:~/x402-repo/test-environments/00_demo/server/wallet.json ./backup/
+scp <USER>@<SERVER_IP>:~/x402-repo/test-environments/00_demo/server/data/x402.db ./backup/
 ```
 
-Baza je SQLite v načinu WAL; za dosledno kopijo storitev pred prenosom ustavi
-(`docker compose stop` oziroma `sudo systemctl stop x402`).
+The database is SQLite in WAL mode; for a consistent copy, stop the service before transferring it
+(`docker compose stop` or `sudo systemctl stop x402`).
 
-**Spremljanje delovanja.** Pot `/health` vrne `200`, ko so v redu baza, povezava do verige in
-zunanji API, sicer `503`. Primerna je za katero koli storitev za spremljanje razpoložljivosti
-ali za preprost cron:
+**Monitoring.** The `/health` path returns `200` when the database, the connection to the chain
+and the external API are all healthy, and `503` otherwise. It suits any uptime monitoring service,
+or a simple cron job:
 
 ```bash
-*/5 * * * * curl -fsS https://x402.tvoja-domena.si/health >/dev/null || echo "x402 ne odgovarja" | mail -s "x402" tvoj-naslov@tvoja-domena.si
+*/5 * * * * curl -fsS https://x402.your-domain.example/health >/dev/null || echo "x402 not responding" | mail -s "x402" you@your-domain.example
 ```
 
-## 8. Pred javno objavo premisli
+## 8. Think it through before going public
 
-- **Stroški.** Strežnik teče neprekinjeno in se plačuje po času. Če ga potrebuješ samo za
-  prikaz, ga med uporabami ustavi.
-- **Ključ zunanjega API.** Brez trde meje pri ponudniku lahko zloraba povzroči stroške.
-  Brez ključa okolje deluje enako, le vrne nadomestni odgovor.
-- **Pravna besedila.** Če stran objaviš širši javnosti, dodaj pogoje uporabe in izjavo o
-  zasebnosti; strežnik beleži naslove denarnic in zgoščene vrednosti transakcij.
-- **Samo testno omrežje.** Privzeta konfiguracija je Ethereum Sepolia. Prehod na omrežje s
-  pravo vrednostjo bi zahteval revizijo, večjo globino potrditev in previdnost pri hrambi
-  ključev — to okolje za to ni namenjeno.
+- **Cost.** The server runs continuously and is billed by time. If you only need it for a
+  demonstration, stop it between uses.
+- **The external API key.** Without a hard cap at the provider, abuse can run up real costs.
+  Without a key the environment behaves exactly the same, it merely returns a stub response.
+- **Legal text.** If you publish the site to a wider audience, add terms of use and a privacy
+  statement; the server records wallet addresses and transaction hashes.
+- **Testnet only.** The default configuration is Ethereum Sepolia. Moving to a network with real
+  value would require an audit, a greater confirmation depth and care in key storage — this
+  environment is not intended for that.
 
-## Odpravljanje težav
+## Troubleshooting
 
-| Znak | Vzrok |
+| Symptom | Cause |
 |---|---|
-| povezava se izteče brez odgovora | vrata zaprta v požarnem zidu (pogosto pri ponudniku, ne v `ufw`) |
-| `Connection refused` | vrata so odprta, strežnik ne teče |
-| Caddy ne dobi potrdila | DNS še ni razširjen, posredniški način ni izklopljen ali vrata 80 zaprta |
-| `/health` vrne 503 | ni dosegljivo vozlišče JSON-RPC — preveri `RPC_URL` |
-| `wallet.json not found` | denarnica trgovca ni na strežniku ali ima napačno pot |
-| `429 Too Many Requests` | omejevalnik pogostosti; podaljšaj premor med zahtevami |
+| the connection times out with no answer | port closed in the firewall (often at the provider, not in `ufw`) |
+| `Connection refused` | the port is open but the server is not running |
+| Caddy does not obtain a certificate | DNS has not propagated yet, proxying mode is not turned off, or port 80 is closed |
+| `/health` returns 503 | no reachable JSON-RPC node — check `RPC_URL` |
+| `wallet.json not found` | the merchant wallet is not on the server, or is at the wrong path |
+| `429 Too Many Requests` | rate limiter; lengthen the pause between requests |

@@ -17,12 +17,12 @@ const ms = (x) => `${x.toFixed(1)} ms`;
 
 async function loadConfig() {
   const r = await fetch('/config');
-  if (!r.ok) throw new Error('Napaka pri /config');
+  if (!r.ok) throw new Error('Error fetching /config');
   cfg = await r.json();
   $('cfg-network').textContent = cfg.network;
   $('cfg-merchant').textContent = cfg.merchant;
   $('cfg-price').textContent = `${cfg.service.price} ${cfg.service.currency} (≈ ${cfg.priceEurApprox} €)`;
-  $('cfg-model').textContent = cfg.aiEnabled ? cfg.model : 'demo način';
+  $('cfg-model').textContent = cfg.aiEnabled ? cfg.model : 'demo mode';
 }
 
 async function ensureSepolia() {
@@ -45,7 +45,7 @@ async function ensureSepolia() {
 
 async function connect() {
   clearError();
-  if (!window.ethereum) { showError('MetaMask ni zaznan. Namesti ga z https://metamask.io in osveži.'); return; }
+  if (!window.ethereum) { showError('MetaMask not detected. Install it from https://metamask.io and refresh.'); return; }
   try {
     const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
     account = getAddress(accounts[0]);
@@ -55,14 +55,14 @@ async function connect() {
     const bal = await publicClient.getBalance({ address: account });
     $('wallet-status').textContent = `${account.slice(0, 6)}…${account.slice(-4)} — ${formatEther(bal).slice(0, 8)} ETH`;
     $('pay-btn').disabled = false;
-  } catch (err) { showError(`Napaka denarnice: ${err.message}`); }
+  } catch (err) { showError(`Wallet error: ${err.message}`); }
 }
 
 async function pay() {
   clearError();
   const prompt = $('prompt').value.trim();
-  if (!prompt) { showError('Najprej vpiši poziv.'); return; }
-  if (!account) { showError('Najprej poveži denarnico.'); return; }
+  if (!prompt) { showError('Enter a prompt first.'); return; }
+  if (!account) { showError('Connect the wallet first.'); return; }
 
   $('pay-btn').disabled = true;
   $('result-card').classList.add('hidden');
@@ -75,7 +75,7 @@ async function pay() {
     setStep('step-request', 'active');
     let s = now();
     const chal = await fetch(`/service?payer=${account}`, { headers: { 'X-Payer': account } });
-    if (chal.status !== 402) throw new Error(`Pričakoval 402, dobil ${chal.status}`);
+    if (chal.status !== 402) throw new Error(`Expected 402, got ${chal.status}`);
     const { payment } = await chal.json();
     T.izziv = now() - s; $('t-izziv').textContent = ms(T.izziv);
     setStep('step-request', 'done');
@@ -96,7 +96,7 @@ async function pay() {
       body: JSON.stringify({ requestId: payment.requestId, txHash: hash, network: payment.network, payerAddress: account })
     });
     const verifyJson = await verifyRes.json();
-    if (!verifyRes.ok) { setStep('step-verify', 'fail'); throw new Error(verifyJson.message || verifyJson.error || 'Preverjanje ni uspelo'); }
+    if (!verifyRes.ok) { setStep('step-verify', 'fail'); throw new Error(verifyJson.message || verifyJson.error || 'Verification failed'); }
     T.preverjanje = now() - s; $('t-preverjanje').textContent = ms(T.preverjanje);
     const proofToken = verifyJson.proofToken;
     setStep('step-verify', 'done');
@@ -109,7 +109,7 @@ async function pay() {
       body: JSON.stringify({ prompt })
     });
     const aiJson = await aiRes.json();
-    if (!aiRes.ok) { setStep('step-ai', 'fail'); throw new Error(aiJson.message || aiJson.error || 'Dostop ni uspel'); }
+    if (!aiRes.ok) { setStep('step-ai', 'fail'); throw new Error(aiJson.message || aiJson.error || 'Access failed'); }
     T.dostop = now() - s; $('t-dostop').textContent = ms(T.dostop);
     setStep('step-ai', 'done');
 
@@ -128,4 +128,4 @@ async function pay() {
 
 $('connect-btn').addEventListener('click', connect);
 $('pay-btn').addEventListener('click', pay);
-loadConfig().catch((e) => showError(`Napaka pri nalaganju konfiguracije: ${e.message}`));
+loadConfig().catch((e) => showError(`Error loading the configuration: ${e.message}`));

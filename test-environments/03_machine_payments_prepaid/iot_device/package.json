@@ -1,5 +1,5 @@
 {
-  "name": "x402-iot-dobroimetje",
+  "name": "x402-iot-prepaid",
   "version": "1.0.0",
   "description": "Mock IoT device with metered prepaid SESSION (credit + budget + validity), EIP-191 debits",
   "main": "server.js",

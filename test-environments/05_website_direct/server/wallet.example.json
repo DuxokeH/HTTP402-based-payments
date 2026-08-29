@@ -1,10 +1,10 @@
 {
-  "_opomba": "Spletišče potrebuje naslov PREJEMNIKA (address) — kamor gredo plačila (tvoja testna denarnica prejemnika oz. naslov IoT naprave). Za PRAVA M2M plačila (zavihka 2 in 3 v real načinu) dodaj še payerPrivateKey financirane denarnice, ki v imenu stroja plačuje. V MOCK načinu payerPrivateKey ni potreben. NIKOLI ne deli privatnega ključa in ga ne nalagaj v git.",
+  "_note": "The website needs the RECEIVER address (address) — where payments go (your receiving test wallet, or the IoT device address if you reuse it). payerPrivateKey is only for the BUILT-IN M2M agent (/run/* paths) in real mode.",
   "address": "0x0000000000000000000000000000000000000000",
   "payerPrivateKey": "",
-  "_opomba_x402": "x402 v2 (vzporedni način — testno: ETH, poravnava sintetična/mock): x402SettlerPrivateKey je PORAVNALNI ključ strežnika/posrednika (potrebuje Ethereum Sepolia ETH za gas; NIKOLI ga ne deli in ne nalagaj v git). x402Address je neobvezni prejemnik (payTo); brez njega se uporabi 'address'.",
+  "_note_x402": "x402 v2 (parallel mode, test ETH configuration): x402SettlerPrivateKey is the server's SETTLEMENT key for the official x402 protocol run (settlement is synthetic in mock); x402Address is the receiving address. Not needed in mock mode.",
   "x402Address": "",
   "x402SettlerPrivateKey": "",
-  "_opomba_x402_payer": "Za vgrajena x402 M2M zavihka (real) dodaj še x402PayerPrivateKey (Ethereum Sepolia ETH — testno, poravnava sintetična/mock).",
+  "_note_x402_payer": "For the built-in x402 M2M tabs (real mode) also add x402PayerPrivateKey (Ethereum Sepolia ETH — test only, settlement synthetic/mock).",
   "x402PayerPrivateKey": ""
 }
